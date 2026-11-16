@@ -1,0 +1,8 @@
+{
+  "name": "muse-automation-clean",
+  "version": "0.1.0",
+  "description": "Independent Muse.ai browser automation desktop tool",
+  "main": "main.js",
+  "license": "UNLICENSED"
+}
+

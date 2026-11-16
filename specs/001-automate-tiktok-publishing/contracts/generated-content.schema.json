@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "generated-content.schema.json",
+  "title": "Generated TikTok Content",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "caption", "hashtags", "cartTitle", "productKeywords"],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "caption": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2200
+    },
+    "hashtags": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^#[^\\s#]+$",
+        "maxLength": 100
+      }
+    },
+    "cartTitle": {
+      "type": "string",
+      "maxLength": 30
+    },
+    "productKeywords": {
+      "type": "array",
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      }
+    }
+  }
+}

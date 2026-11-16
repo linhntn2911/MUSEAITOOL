@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tiktok-state.schema.json",
+  "title": "TikTok State Subtree",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["settings", "accounts", "jobs", "mediaAssets", "contentProfiles", "control"],
+  "properties": {
+    "settings": { "type": "object" },
+    "accounts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/account" }
+    },
+    "jobs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/job" }
+    },
+    "mediaAssets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/media" }
+    },
+    "contentProfiles": { "type": "array", "items": { "type": "object" } },
+    "control": { "type": "object" }
+  },
+  "$defs": {
+    "account": {
+      "type": "object",
+      "required": ["id", "label", "status", "profilePath", "cdpPort", "paused"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "handle": { "type": ["string", "null"] },
+        "nickname": { "type": ["string", "null"] },
+        "status": {
+          "enum": ["unknown", "opening", "checking", "live", "busy", "paused",
+            "login_required", "verification_required"]
+        },
+        "profilePath": { "type": "string", "minLength": 1 },
+        "cdpPort": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+        "paused": { "type": "boolean" },
+        "activeJobId": { "type": ["string", "null"] },
+        "lastCheckedAt": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "job": {
+      "type": "object",
+      "required": ["id", "sourceKind", "sourceFingerprint", "sourceVideoAssetId", "status",
+        "progress", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "sourceKind": { "enum": ["muse_result", "external_file"] },
+        "sourceFingerprint": { "type": "string", "minLength": 1 },
+        "sourceVideoAssetId": { "type": "string", "minLength": 1 },
+        "uploadVideoAssetId": { "type": ["string", "null"] },
+        "productImageAssetId": { "type": ["string", "null"] },
+        "accountId": { "type": ["string", "null"] },
+        "status": {
+          "enum": ["draft", "waiting_content", "generating_content", "waiting_product",
+            "checking_product", "waiting_product_confirmation", "processing_audio", "ready",
+            "opening_studio", "uploading", "filling_metadata", "configuring_schedule",
+            "submitting", "scheduled", "posted", "needs_reconciliation", "paused", "failed",
+            "cancelled"]
+        },
+        "progress": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "media": {
+      "type": "object",
+      "required": ["id", "kind", "path", "fingerprint", "pinned", "exists"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["source_video", "processed_video", "product_image", "audio_source"] },
+        "path": { "type": "string", "minLength": 1 },
+        "fingerprint": { "type": "string", "minLength": 1 },
+        "durationSeconds": { "type": ["number", "null"], "minimum": 0 },
+        "parentAssetId": { "type": ["string", "null"] },
+        "retentionEligibleAt": { "type": ["string", "null"], "format": "date-time" },
+        "pinned": { "type": "boolean" },
+        "exists": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+# Runtime data and user profiles (sensitive session cookies, downloaded media, state)
+/data/
+
+# Electron binary distribution
+/*.exe
+/*.dll
+/*.pak
+/*.bin
+/*.dat
+/vk_swiftshader_icd.json
+/LICENSE.electron.txt
+/LICENSES.chromium.html
+/locales/
+/resources/
+
+# Specify local tool binaries and caches
+/.specify-bin/
+/.specify-cli/
+
+# Dependencies
+node_modules/
+
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db
