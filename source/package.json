@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "description": "Independent Muse.ai browser automation desktop tool",
   "main": "main.js",
+  "scripts": {
+    "test": "node ../tests/run-all.js"
+  },
   "license": "UNLICENSED"
 }
-
