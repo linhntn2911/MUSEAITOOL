@@ -234,10 +234,47 @@ ipcMain.handle("tiktok:accounts:add", async (_e, { label }) => {
   broadcast();
   return { ok: true, account: acc };
 });
-ipcMain.handle("tiktok:accounts:check", async (_e, { accountId }) => {
-  const res = await accountManager.checkAccount(accountId);
-  broadcast();
-  return { ok: true, ...res };
+ipcMain.handle("tiktok:accounts:check", async (_e, { accountId } = {}) => {
+  if (accountId && accountId !== "all") {
+    const res = await accountManager.checkAccount(accountId);
+    broadcast();
+    return { ok: true, ...res };
+  } else {
+    const accs = stateStore.getTikTokState().accounts || [];
+    const results = [];
+    for (const a of accs) {
+      try {
+        const r = await accountManager.checkAccount(a.id);
+        results.push({ accountId: a.id, ...r });
+      } catch (err) {
+        results.push({ accountId: a.id, status: "error", error: err.message });
+      }
+    }
+    broadcast();
+    return { ok: true, results };
+  }
+});
+ipcMain.handle("tiktok:accounts:show", async (_e, { accountId } = {}) => {
+  if (accountId && accountId !== "all") {
+    await accountManager.showAccount(accountId);
+  } else {
+    const accs = stateStore.getTikTokState().accounts || [];
+    for (const a of accs) {
+      await accountManager.showAccount(a.id);
+    }
+  }
+  return { ok: true };
+});
+ipcMain.handle("tiktok:accounts:hide", async (_e, { accountId } = {}) => {
+  if (accountId && accountId !== "all") {
+    await accountManager.hideAccount(accountId);
+  } else {
+    const accs = stateStore.getTikTokState().accounts || [];
+    for (const a of accs) {
+      await accountManager.hideAccount(a.id);
+    }
+  }
+  return { ok: true };
 });
 ipcMain.handle("tiktok:accounts:pause", async (_e, { accountId }) => {
   const res = accountManager.pauseAccount(accountId);

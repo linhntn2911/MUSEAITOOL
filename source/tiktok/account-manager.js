@@ -85,22 +85,56 @@ class AccountManager {
     return account;
   }
 
-  async launchChrome(account, showWindow = true) {
+  async isPortAlive(port) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/json/list`, {
+        signal: AbortSignal.timeout(1500)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return Array.isArray(data);
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async ensureChrome(account, showWindow = true, targetUrl = "https://www.tiktok.com/tiktokstudio?lang=vi-VN") {
+    const alive = await this.isPortAlive(account.cdpPort);
+    if (alive) {
+      return this.processes.get(account.id) || null;
+    }
+    return await this.launchChrome(account, showWindow, targetUrl);
+  }
+
+  async launchChrome(account, showWindow = true, targetUrl = "https://www.tiktok.com/tiktokstudio?lang=vi-VN") {
     if (this.processes.has(account.id)) {
       const proc = this.processes.get(account.id);
-      if (!proc.killed) return proc;
+      if (!proc.killed) {
+        return proc;
+      }
     }
 
     const chromePath = findChromePath();
     const args = [
       `--user-data-dir=${account.profilePath}`,
       `--remote-debugging-port=${account.cdpPort}`,
+      "--remote-allow-origins=*",
       "--no-first-run",
-      "--no-default-browser-check"
+      "--no-default-browser-check",
+      "--disable-blink-features=AutomationControlled",
+      "--disable-dev-shm-usage",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--window-size=1280,800"
     ];
 
     if (!showWindow) {
       args.push("--headless=new");
+    } else if (targetUrl) {
+      args.push(targetUrl);
     }
 
     const proc = spawn(chromePath, args, {
@@ -116,6 +150,24 @@ class AccountManager {
     return proc;
   }
 
+  async showAccount(accountId, url = "https://www.tiktok.com/tiktokstudio?lang=vi-VN") {
+    const ttState = this.stateStore.getTikTokState();
+    const account = ttState.accounts.find(a => a.id === accountId);
+    if (!account) throw createAccountError(ERROR_CODES.ACCOUNT_NOT_FOUND, "Không tìm thấy tài khoản.");
+    return await this.ensureChrome(account, true, url);
+  }
+
+  async hideAccount(accountId) {
+    if (this.processes.has(accountId)) {
+      const proc = this.processes.get(accountId);
+      try {
+        proc.kill();
+      } catch (_) {}
+      this.processes.delete(accountId);
+    }
+    return { ok: true };
+  }
+
   async checkAccount(accountId, adapter = null) {
     const ttState = this.stateStore.getTikTokState();
     const account = ttState.accounts.find(a => a.id === accountId);
@@ -126,7 +178,7 @@ class AccountManager {
     const studio = adapter || new StudioAdapter({ cdpPort: account.cdpPort });
     try {
       if (!adapter) {
-        await this.launchChrome(account, true);
+        await this.ensureChrome(account, true);
         await studio.connect(account.cdpPort);
       }
 

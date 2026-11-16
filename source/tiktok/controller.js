@@ -292,7 +292,7 @@ class TikTokController {
     const ttState = this.stateStore.getTikTokState();
     const toRun = jobIds && jobIds.length > 0
       ? ttState.jobs.filter(j => jobIds.includes(j.id))
-      : ttState.jobs.filter(j => j.status === "ready");
+      : ttState.jobs.filter(j => ["ready", "waiting_content", "draft", "paused"].includes(j.status));
 
     if (toRun.length === 0) {
       return { ok: false, message: "Không có job nào ở trạng thái sẵn sàng để chạy." };
@@ -301,6 +301,7 @@ class TikTokController {
     if (!this.publishingEngine) {
       this.publishingEngine = new PublishingEngine({
         stateStore: this.stateStore,
+        accountManager: this.accountManager,
         adapterFactory
       });
     }

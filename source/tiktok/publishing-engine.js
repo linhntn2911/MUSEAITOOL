@@ -4,11 +4,13 @@ const fs = require("node:fs");
 const { JOB_STATUSES, calculateProgress } = require("../models/state-machine");
 const { logger } = require("../core/redacted-log");
 const { createError, ERROR_CODES } = require("../core/errors");
+const { StudioAdapter } = require("./studio-adapter");
 
 class PublishingEngine {
   constructor(options = {}) {
     this.stateStore = options.stateStore;
     this.adapterFactory = options.adapterFactory || null;
+    this.accountManager = options.accountManager || null;
     this.activeAccountLocks = new Set();
     this.runningWorkers = new Map();
   }
@@ -55,7 +57,7 @@ class PublishingEngine {
       throw createError(ERROR_CODES.ACCOUNT_BUSY, "Kênh đang bận xử lý một video khác");
     }
 
-    const adapter = injectedAdapter || (this.adapterFactory ? this.adapterFactory(account) : null);
+    const adapter = injectedAdapter || (this.adapterFactory ? this.adapterFactory(account) : new StudioAdapter({ cdpPort: account.cdpPort }));
     if (!adapter) {
       this.releaseAccountLock(account.id);
       throw createError(ERROR_CODES.UNKNOWN_ERROR, "Không thể khởi tạo adapter kết nối TikTok");
@@ -81,7 +83,11 @@ class PublishingEngine {
     try {
       // Pre-flight check video asset
       const videoAsset = ttState.mediaAssets.find(a => a.id === (job.uploadVideoAssetId || job.sourceVideoAssetId));
-      if (!videoAsset || !fs.existsSync(videoAsset.path)) {
+      let videoPath = videoAsset?.path;
+      if (!videoPath && job.videoPath) videoPath = job.videoPath;
+      if (!videoPath && job.filePath) videoPath = job.filePath;
+
+      if (!videoPath || !fs.existsSync(videoPath)) {
         throw createError(ERROR_CODES.VIDEO_NOT_FOUND, "File video cần upload không tồn tại");
       }
 
@@ -90,6 +96,11 @@ class PublishingEngine {
         if (!job.productMatch || !job.productMatch.confirmed) {
           throw createError(ERROR_CODES.PRODUCT_UNVERIFIED, "Job ở chế độ giỏ hàng nhưng chưa xác minh sản phẩm");
         }
+      }
+
+      // Ensure Chrome is running for this account
+      if (this.accountManager && typeof this.accountManager.ensureChrome === "function") {
+        await this.accountManager.ensureChrome(account, true, "https://www.tiktok.com/tiktokstudio/upload?lang=vi-VN");
       }
 
       updateJobStatus(JOB_STATUSES.OPENING_STUDIO, "Đang mở TikTok Studio");
@@ -105,7 +116,18 @@ class PublishingEngine {
       }
 
       updateJobStatus(JOB_STATUSES.UPLOADING, "Đang tải video lên TikTok");
-      await adapter.uploadVideo(videoAsset.path);
+      await adapter.uploadVideo(videoPath);
+
+      // Optional Audio & Music edit
+      if (job.options?.muteOriginalSound || job.options?.addRecommendedMusic) {
+        if (typeof adapter.editAudioAndMusic === "function") {
+          updateJobStatus(JOB_STATUSES.PROCESSING_AUDIO, "Đang tắt tiếng gốc & chèn nhạc đề xuất");
+          await adapter.editAudioAndMusic({
+            muteOriginalSound: Boolean(job.options?.muteOriginalSound),
+            addRecommendedMusic: Boolean(job.options?.addRecommendedMusic)
+          }).catch(err => logger.warn("publishing-engine", `Lỗi chỉnh nhạc/âm thanh: ${err.message}`));
+        }
+      }
 
       updateJobStatus(JOB_STATUSES.FILLING_METADATA, "Đang điền tiêu đề và hashtag");
       await adapter.fillMetadata({
@@ -113,6 +135,20 @@ class PublishingEngine {
         caption: job.content?.caption || "",
         hashtags: job.content?.hashtags || []
       });
+
+      // Optional Showcase Product Cart attachment
+      if (job.accountMode === "affiliate" || (job.productMatch && job.productMatch.confirmed)) {
+        if (typeof adapter.attachProductCart === "function") {
+          updateJobStatus(JOB_STATUSES.ATTACHING_PRODUCT || JOB_STATUSES.FILLING_METADATA, "Đang gắn giỏ hàng sản phẩm Showcase");
+          await adapter.attachProductCart(
+            {
+              productId: job.productMatch?.productId || job.productId || "",
+              keyword: job.productMatch?.productName || job.productKeyword || ""
+            },
+            job.productMatch?.displayName || job.productDisplayName || ""
+          ).catch(err => logger.warn("publishing-engine", `Lỗi gắn sản phẩm giỏ hàng: ${err.message}`));
+        }
+      }
 
       const mode = job.schedule?.mode || "immediate";
       updateJobStatus(JOB_STATUSES.CONFIGURING_SCHEDULE, `Đang cấu hình chế độ: ${mode}`);

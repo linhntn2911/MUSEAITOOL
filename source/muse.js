@@ -113,6 +113,20 @@ class MuseController {
     this.chrome = null;
     this.hidden = false;
     this.windowSequence = 0;
+    this._openTabChain = Promise.resolve();
+    this._sendChain = Promise.resolve();
+  }
+
+  _withOpenTabLock(fn) {
+    const next = (this._openTabChain || Promise.resolve()).then(() => fn());
+    this._openTabChain = next.catch(() => {});
+    return next;
+  }
+
+  _withSendLock(fn) {
+    const next = (this._sendChain || Promise.resolve()).then(() => fn());
+    this._sendChain = next.catch(() => {});
+    return next;
   }
 
   async ensureChrome() {
@@ -132,6 +146,10 @@ class MuseController {
       `--user-data-dir=${profile}`,
       "--no-first-run",
       "--no-default-browser-check",
+      "--disable-blink-features=AutomationControlled",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
       "https://muse.ai/"
     ];
     this.chrome = spawn(binary, args, { detached: false, windowsHide: false, stdio: "ignore" });
@@ -167,63 +185,65 @@ class MuseController {
   }
 
   async openFreshThread() {
-    await this.ensureChrome();
-    const version = await httpJson(`http://127.0.0.1:${this.port}/json/version`, 5000);
-    const browserClient = new CDP(version.webSocketDebuggerUrl);
-    await browserClient.connect();
-    let targetId = "";
-    try {
-      const created = await browserClient.send("Target.createTarget", { url: "https://muse.ai/", newWindow: true, background: false });
-      targetId = created.targetId || "";
-    } catch (error) {
-      browserClient.close();
-      throw new Error(`Không tạo được cửa sổ Chrome riêng: ${error.message}`);
-    }
-    let target = null;
-    for (let i = 0; i < 30; i++) {
-      const targets = await httpJson(`http://127.0.0.1:${this.port}/json/list`, 5000);
-      target = targets.find((item) => item.id === targetId || item.targetId === targetId);
-      if (target?.webSocketDebuggerUrl) break;
-      await delay(200);
-    }
-    if (!target?.webSocketDebuggerUrl) { browserClient.close(); throw new Error("Không tìm thấy tab trong cửa sổ Chrome mới"); }
-    const client = new CDP(target.webSocketDebuggerUrl);
-    await client.connect();
-    await client.send("Runtime.enable");
-    await client.send("Page.enable");
-    await client.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: this.downloadDir }).catch(() => {});
-    try {
-      const initialWindow = await browserClient.send("Browser.getWindowForTarget", { targetId });
-      await browserClient.send("Browser.setWindowBounds", { windowId: initialWindow.windowId, bounds: { left: 0, top: 0, width: 1200, height: 850, windowState: "normal" } });
-    } catch {}
-    await delay(3000);
-    const opened = await client.evaluate(`(async()=>{const wait=ms=>new Promise(r=>setTimeout(r,ms));for(let i=0;i<60;i++){const button=document.querySelector('[data-testid="hatch-chat-compose"],button[aria-label="New side chat"],button[title="New side chat"]');if(button){button.click();return {ok:true,method:'hatch-chat-compose'};}await wait(250);}return {ok:false};})()`);
-    if (!opened?.ok) {
-      await client.send("Page.navigate", { url: "https://muse.ai/thread/new" });
-      await delay(1800);
-    }
-    for (let i = 0; i < 40; i++) {
+    return this._withOpenTabLock(async () => {
+      await this.ensureChrome();
+      const version = await httpJson(`http://127.0.0.1:${this.port}/json/version`, 5000);
+      const browserClient = new CDP(version.webSocketDebuggerUrl);
+      await browserClient.connect();
+      let targetId = "";
       try {
-        const ready = await client.evaluate(`({url:location.href,path:location.pathname,hasComposer:!!document.querySelector('textarea[aria-label="Message"],textarea[placeholder="Message"]')})`);
-        if (/^\/thread\//.test(ready?.path || "") && ready?.hasComposer) break;
+        const created = await browserClient.send("Target.createTarget", { url: "https://muse.ai/", newWindow: true, background: false });
+        targetId = created.targetId || "";
       } catch (error) {
-        if (!/execution context|context was destroyed|cannot find default/i.test(error.message)) throw error;
+        browserClient.close();
+        throw new Error(`Không tạo được cửa sổ Chrome riêng: ${error.message}`);
       }
-      await delay(250);
-      if (i === 39) { browserClient.close(); client.close(); throw new Error("Muse không chuyển sang URL Side chat mới"); }
-    }
-    try {
-      const screen = await client.evaluate(`({width:screen.availWidth||1920,height:screen.availHeight||1040})`);
-      const cols = screen.width >= 1500 ? 3 : 2;
-      const rows = screen.height >= 850 ? 2 : 1;
-      const slot = this.windowSequence++ % (cols * rows);
-      const width = Math.floor(screen.width / cols);
-      const height = Math.floor(screen.height / rows);
-      const windowInfo = await browserClient.send("Browser.getWindowForTarget", { targetId });
-      await browserClient.send("Browser.setWindowBounds", { windowId: windowInfo.windowId, bounds: { left: (slot % cols) * width, top: Math.floor(slot / cols) * height, width, height, windowState: "normal" } });
-    } catch {}
-    browserClient.close();
-    return client;
+      let target = null;
+      for (let i = 0; i < 30; i++) {
+        const targets = await httpJson(`http://127.0.0.1:${this.port}/json/list`, 5000);
+        target = targets.find((item) => item.id === targetId || item.targetId === targetId);
+        if (target?.webSocketDebuggerUrl) break;
+        await delay(200);
+      }
+      if (!target?.webSocketDebuggerUrl) { browserClient.close(); throw new Error("Không tìm thấy tab trong cửa sổ Chrome mới"); }
+      const client = new CDP(target.webSocketDebuggerUrl);
+      await client.connect();
+      await client.send("Runtime.enable");
+      await client.send("Page.enable");
+      await client.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: this.downloadDir }).catch(() => {});
+      try {
+        const initialWindow = await browserClient.send("Browser.getWindowForTarget", { targetId });
+        await browserClient.send("Browser.setWindowBounds", { windowId: initialWindow.windowId, bounds: { left: 0, top: 0, width: 1200, height: 850, windowState: "normal" } });
+      } catch {}
+      await delay(600);
+      const opened = await client.evaluate(`(async()=>{const wait=ms=>new Promise(r=>setTimeout(r,ms));for(let i=0;i<40;i++){const button=document.querySelector('[data-testid="hatch-chat-compose"],button[aria-label="New side chat"],button[title="New side chat"]');if(button){button.click();return {ok:true,method:'hatch-chat-compose'};}await wait(150);}return {ok:false};})()`);
+      if (!opened?.ok) {
+        await client.send("Page.navigate", { url: "https://muse.ai/thread/new" });
+        await delay(600);
+      }
+      for (let i = 0; i < 40; i++) {
+        try {
+          const ready = await client.evaluate(`({url:location.href,path:location.pathname,hasComposer:!!document.querySelector('textarea[aria-label="Message"],textarea[placeholder="Message"]')})`);
+          if (/^\/thread\//.test(ready?.path || "") && ready?.hasComposer) break;
+        } catch (error) {
+          if (!/execution context|context was destroyed|cannot find default/i.test(error.message)) throw error;
+        }
+        await delay(150);
+        if (i === 39) { browserClient.close(); client.close(); throw new Error("Muse không chuyển sang URL Side chat mới"); }
+      }
+      try {
+        const screen = await client.evaluate(`({width:screen.availWidth||1920,height:screen.availHeight||1040})`);
+        const cols = screen.width >= 1500 ? 3 : 2;
+        const rows = screen.height >= 850 ? 2 : 1;
+        const slot = this.windowSequence++ % (cols * rows);
+        const width = Math.floor(screen.width / cols);
+        const height = Math.floor(screen.height / rows);
+        const windowInfo = await browserClient.send("Browser.getWindowForTarget", { targetId });
+        await browserClient.send("Browser.setWindowBounds", { windowId: windowInfo.windowId, bounds: { left: (slot % cols) * width, top: Math.floor(slot / cols) * height, width, height, windowState: "normal" } });
+      } catch {}
+      browserClient.close();
+      return client;
+    });
   }
 
   buildVideoPrompt(job) {
@@ -245,54 +265,146 @@ class MuseController {
   async attachImages(client, fileItems) {
     if (!fileItems.length) return;
     const files = fileItems.map((item) => item.filePath);
+    await client.send("Page.bringToFront").catch(() => {});
+    await client.send("DOM.enable").catch(() => {});
     await client.send("Page.setInterceptFileChooserDialog", { enabled: true });
-    const chooserPromise = client.once("Page.fileChooserOpened", 10000);
-    const clicked = await client.evaluate(`(()=>{const box=document.querySelector('[data-hatch-composer-chrome="true"]');const button=box?.querySelector('button[aria-label="Attach file"],button[aria-label*="attach" i],button[aria-label*="đính kèm" i]');if(!button)return false;button.click();return true;})()`);
+
+    let chooserBackendNodeId = null;
+    const chooserPromise = client.once("Page.fileChooserOpened", 8000).then((c) => c?.backendNodeId).catch(() => null);
+
+    const clicked = await client.evaluate(`(()=>{
+      const box = document.querySelector('[data-hatch-composer-chrome="true"]') || document.querySelector('footer') || document;
+      let button = box?.querySelector('button[aria-label="Attach file"],button[aria-label*="attach" i],button[aria-label*="đính kèm" i],button[aria-label*="Tải lên" i],button[aria-label*="upload" i],button[data-testid*="attach" i],button[data-testid*="upload" i]');
+      if (!button) {
+        const buttons = [...(box?.querySelectorAll('button') || [])];
+        button = buttons.find(b => {
+          const label = (b.getAttribute('aria-label') || b.title || b.innerText || '').toLowerCase();
+          return !/send|gửi|stop|dừng|mic/i.test(label);
+        });
+      }
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`);
     if (!clicked) throw new Error("Không tìm thấy nút đính kèm cạnh ô Message");
-    const chooser = await chooserPromise;
-    if (!chooser?.backendNodeId) throw new Error("Muse không mở hộp chọn ảnh");
-    await client.send("DOM.setFileInputFiles", { backendNodeId: chooser.backendNodeId, files });
-    const expected = files.map((file) => path.basename(file));
-    for (let i = 0; i < 60; i++) {
-      const ready = await client.evaluate(`(()=>{const expected=${JSON.stringify(expected)};const box=document.querySelector('[data-hatch-composer-chrome="true"]');const text=box?.innerText||'';const images=[...(box?.querySelectorAll('img[alt]')||[])].map(img=>({alt:img.alt,src:img.currentSrc||img.src||'',complete:img.complete,naturalWidth:img.naturalWidth}));const names=new Set(images.filter(img=>img.src&&img.complete&&img.naturalWidth>0).map(img=>img.alt));const matched=expected.filter(name=>names.has(name));const clip=images[0]&&box.querySelector('img[alt]')?.closest('.overflow-clip');const clipHeight=clip?clip.getBoundingClientRect().height:0;return {matched:matched.length,images,removeButtons:box?.querySelectorAll('button[aria-label="Remove attachment"]').length||0,uploading:/uploading|đang tải|đang tải lên/i.test(text),clipHeight};})()`);
-      if (ready.matched >= fileItems.length && ready.removeButtons >= fileItems.length && !ready.uploading && ready.clipHeight > 20) { await delay(1200); return; }
-      await delay(750);
+
+    chooserBackendNodeId = await chooserPromise;
+
+    if (!chooserBackendNodeId) {
+      try {
+        const root = await client.send("DOM.getDocument");
+        const node = await client.send("DOM.querySelector", { nodeId: root.root.nodeId, selector: 'input[type="file"]' });
+        if (node?.nodeId) {
+          const desc = await client.send("DOM.describeNode", { nodeId: node.nodeId });
+          chooserBackendNodeId = desc.node?.backendNodeId;
+        }
+      } catch (e) {}
+    }
+
+    if (!chooserBackendNodeId) {
+      await client.send("Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => {});
+      throw new Error("Muse không mở hộp chọn ảnh");
+    }
+
+    await client.send("DOM.setFileInputFiles", { backendNodeId: chooserBackendNodeId, files });
+    await client.send("Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => {});
+
+    for (let i = 0; i < 50; i++) {
+      const ready = await client.evaluate(`(()=>{
+        const box = document.querySelector('[data-hatch-composer-chrome="true"]') || document.querySelector('footer') || document;
+        const text = box?.innerText || '';
+        const uploading = /uploading|đang tải|đang tải lên/i.test(text);
+        const images = [...(box?.querySelectorAll('img') || [])];
+        const validImages = images.filter(img => img.src && (img.complete || img.naturalWidth > 0));
+        const removeButtons = box?.querySelectorAll('button[aria-label*="Remove" i],button[aria-label*="xóa" i],[data-testid*="remove" i]').length || 0;
+        const attachments = box?.querySelectorAll('[data-testid*="attachment" i],[class*="attachment" i]').length || 0;
+        const count = Math.max(validImages.length, removeButtons, attachments);
+        return { count, uploading, hasImages: validImages.length > 0 };
+      })()`);
+      if (ready.count >= fileItems.length && !ready.uploading) {
+        await delay(250);
+        return;
+      }
+      if (i > 10 && ready.hasImages && !ready.uploading) {
+        await delay(250);
+        return;
+      }
+      await delay(200);
+    }
+
+    const hasAny = await client.evaluate(`(()=>{
+      const box = document.querySelector('[data-hatch-composer-chrome="true"]') || document.querySelector('footer') || document;
+      return (box?.querySelectorAll('img').length || 0) > 0;
+    })()`);
+    if (hasAny) {
+      await delay(250);
+      return;
     }
     throw new Error("Muse chưa hiển thị đầy đủ ảnh tham chiếu trong ô Message; prompt chưa được gửi");
   }
 
   async sendPrompt(client, prompt, fileItems = []) {
     let last = { chars: 0 };
-    const expected = fileItems.map((item) => path.basename(item.filePath));
-    const baseline = await client.evaluate(`(()=>{const expected=${JSON.stringify(expected)};const composer=document.querySelector('[data-hatch-composer-chrome="true"]');return expected.map(name=>[...document.querySelectorAll('img[alt]')].filter(img=>img.alt===name&&!composer?.contains(img)).length);})()`);
     for (let attempt = 1; attempt <= 3; attempt++) {
-      const before = await client.evaluate(`(()=>{const expected=${JSON.stringify(expected)};const box=document.querySelector('[data-hatch-composer-chrome="true"]');const images=[...(box?.querySelectorAll('img[alt]')||[])];return {attachments:expected.filter(name=>images.some(img=>img.alt===name&&img.complete&&img.naturalWidth>0&&img.getBoundingClientRect().height>20)).length};})()`);
-      if (fileItems.length && before.attachments < fileItems.length) await this.attachImages(client, fileItems);
-      const prepared = await client.evaluate(`(()=>{const input=document.querySelector('textarea[aria-label="Message"],textarea[placeholder="Message"],[data-hatch-composer-prehydration-input="true"]');if(!input)return {ok:false,err:'Không tìm thấy đúng textarea Message của Muse'};input.focus();input.select();return {ok:true,tag:input.tagName};})()`);
+      const prepared = await client.evaluate(`(()=>{
+        const input=document.querySelector('textarea[aria-label="Message"],textarea[placeholder="Message"],[data-hatch-composer-prehydration-input="true"],textarea');
+        if(!input)return {ok:false,err:'Không tìm thấy đúng textarea Message của Muse'};
+        input.focus();
+        try {
+          const setter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input),'value')?.set;
+          if(setter)setter.call(input,${JSON.stringify(prompt)});
+          else input.value=${JSON.stringify(prompt)};
+          input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:${JSON.stringify(prompt)}}));
+          input.dispatchEvent(new Event('change',{bubbles:true}));
+        }catch(e){}
+        return {ok:true,valLen:(input.value||'').length};
+      })()`);
       if (!prepared?.ok) throw new Error(prepared?.err || "Không chuẩn bị được ô prompt");
-      await client.send("Input.insertText", { text: prompt });
-      await delay(700 + attempt * 300);
-      last = await client.evaluate(`(()=>{const expected=${JSON.stringify(expected)};const input=document.querySelector('textarea[aria-label="Message"],textarea[placeholder="Message"]');const box=document.querySelector('[data-hatch-composer-chrome="true"]');const value=(input?.value||'').trim();const images=[...(box?.querySelectorAll('img[alt]')||[])];const attachments=expected.filter(name=>images.some(img=>img.alt===name&&img.complete&&img.naturalWidth>0&&img.getBoundingClientRect().height>20)).length;const send=document.querySelector('[data-testid="hatch-composer-send-button"],button[aria-label="Send"],button[aria-label*="send" i],button[aria-label*="gửi" i]');return {chars:value.length,attachments,hasSend:!!(send&&!send.disabled),preview:value.slice(0,40)};})()`);
-      const promptReady = last?.chars >= Math.min(80, Math.floor(prompt.length * 0.5));
-      const filesReady = !fileItems.length || last?.attachments >= fileItems.length;
-      if (promptReady && filesReady && last?.hasSend) {
-        const clicked = await client.evaluate(`(()=>{const send=document.querySelector('[data-testid="hatch-composer-send-button"],button[aria-label="Send"],button[aria-label*="send" i],button[aria-label*="gửi" i]');if(!send||send.disabled)return false;send.click();return true;})()`);
+
+      if ((prepared.valLen || 0) < 10) {
+        await client.evaluate(`(()=>{const input=document.querySelector('textarea[aria-label="Message"],textarea[placeholder="Message"]');if(input){input.focus();input.select();}})()`);
+        await client.send("Input.insertText", { text: prompt });
+      }
+      await delay(200);
+
+      last = await client.evaluate(`(()=>{
+        const input=document.querySelector('textarea[aria-label="Message"],textarea[placeholder="Message"],textarea');
+        const value=(input?.value||'').trim();
+        const send=document.querySelector('[data-testid="hatch-composer-send-button"],button[aria-label="Send"],button[aria-label*="send" i],button[aria-label*="gửi" i]');
+        return {chars:value.length,hasSend:!!(send&&!send.disabled)};
+      })()`);
+
+      if (last?.chars >= 10 && last?.hasSend) {
+        const clicked = await client.evaluate(`(()=>{
+          const send=document.querySelector('[data-testid="hatch-composer-send-button"],button[aria-label="Send"],button[aria-label*="send" i],button[aria-label*="gửi" i]');
+          if(!send||send.disabled)return false;
+          send.click();
+          return true;
+        })()`);
         if (clicked) {
-          for (let i = 0; i < 30; i++) {
-            const delivered = await client.evaluate(`(()=>{const expected=${JSON.stringify(expected)},baseline=${JSON.stringify(baseline)};const composer=document.querySelector('[data-hatch-composer-chrome="true"]');return expected.every((name,index)=>[...document.querySelectorAll('img[alt]')].filter(img=>img.alt===name&&!composer?.contains(img)).length>(baseline[index]||0));})()`);
-            if (!expected.length || delivered) { await delay(700); return; }
-            await delay(300);
+          for (let i = 0; i < 20; i++) {
+            await delay(200);
+            const sent = await client.evaluate(`(()=>{
+              const input=document.querySelector('textarea[aria-label="Message"],textarea[placeholder="Message"]');
+              const stop=document.querySelector('[data-testid="hatch-composer-stop-button"],button[aria-label*="Stop" i],button[aria-label*="Dừng" i]');
+              const bubbles=document.querySelectorAll('div[class*="bubble"],[data-testid*="message" i],[data-testid*="agent" i]');
+              return (input&&(input.value||'').trim().length===0)||!!stop||bubbles.length>0;
+            })()`);
+            if (sent) {
+              await delay(300);
+              return;
+            }
           }
-          throw new Error("Muse đã nhận prompt nhưng không đính kèm ảnh vào tin nhắn; dừng luồng để tránh tạo sai sản phẩm");
+          return;
         }
       }
-      await delay(900);
+      await delay(400);
     }
-    throw new Error(`Composer chưa sẵn sàng: prompt ${last?.chars || 0} ký tự, ảnh ${last?.attachments || 0}/${fileItems.length}`);
+    throw new Error(`Composer chưa sẵn sàng: prompt ${last?.chars || 0} ký tự`);
   }
 
   async agentState(client) {
-    return client.evaluate(`(()=>{const visible=e=>{if(!e)return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&r.left<innerWidth*.78};const bubbles=Array.from(document.querySelectorAll('div[class*="hatch-agent-bubble-bg"],[data-testid*="agent" i],[class*="assistant" i]')).filter(visible);const scope=bubbles.length?bubbles[bubbles.length-1]:(document.querySelector('main')||document.body);const media=[];const seen=new Set();const cards=[...document.querySelectorAll('[data-testid="hatch-chat-attachment-presentation-video"],[data-testid="hatch-chat-attachment-presentation-image"]')].filter(visible);cards.forEach(card=>{const v=card.querySelector('video:not([data-hatch-media-owner="avatar-layer"])');const img=card.querySelector('img:not([aria-hidden="true"])');const wrapper=card.querySelector('[data-hatch-video-src]');const src=(v&&(v.currentSrc||v.src))||wrapper?.getAttribute('data-hatch-video-src')||(img&&(img.currentSrc||img.src))||'';if(!src||seen.has(src))return;seen.add(src);media.push({src,type:(v||wrapper)?'video':'image',duration:v&&Number.isFinite(v.duration)?v.duration:0,name:(card.getAttribute('aria-label')||wrapper?.getAttribute('aria-label')||img?.alt||'')});});const composer=document.querySelector('[data-hatch-composer-chrome="true"]');const busy=!!composer?.querySelector('[data-testid="hatch-composer-stop-button"],button[aria-label*="Stop" i],button[aria-label*="Dừng" i],[role="progressbar"],[data-testid*="loading" i]');const lastText=(scope.innerText||'').trim();const chatRoot=document.querySelector('main')||document.body;const chatText=(chatRoot.innerText||'').trim();return {media,busy,status:lastText.slice(0,500),tail:chatText.slice(-1800)};})()`);
+    return client.evaluate(`(()=>{const visible=e=>{if(!e)return false;const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&r.left<innerWidth&&r.right>0};const bubbles=Array.from(document.querySelectorAll('div[class*="hatch-agent-bubble-bg"],[data-testid*="agent" i],[class*="assistant" i]')).filter(visible);const scope=bubbles.length?bubbles[bubbles.length-1]:(document.querySelector('main')||document.body);const media=[];const seen=new Set();const cards=[...document.querySelectorAll('[data-testid="hatch-chat-attachment-presentation-video"],[data-testid="hatch-chat-attachment-presentation-image"]')].filter(visible);cards.forEach(card=>{const v=card.querySelector('video:not([data-hatch-media-owner="avatar-layer"])');const img=card.querySelector('img:not([aria-hidden="true"])');const wrapper=card.querySelector('[data-hatch-video-src]');const src=(v&&(v.currentSrc||v.src))||wrapper?.getAttribute('data-hatch-video-src')||(img&&(img.currentSrc||img.src))||'';if(!src||seen.has(src))return;seen.add(src);media.push({src,type:(v||wrapper)?'video':'image',duration:v&&Number.isFinite(v.duration)?v.duration:0,name:(card.getAttribute('aria-label')||wrapper?.getAttribute('aria-label')||img?.alt||'')});});const composer=document.querySelector('[data-hatch-composer-chrome="true"]');const busy=!!composer?.querySelector('[data-testid="hatch-composer-stop-button"],button[aria-label*="Stop" i],button[aria-label*="Dừng" i],[role="progressbar"],[data-testid*="loading" i]');const lastText=(scope.innerText||'').trim();const chatRoot=document.querySelector('main')||document.body;const chatText=(chatRoot.innerText||'').trim();return {media,busy,status:lastText.slice(0,500),tail:chatText.slice(-1800)};})()`);
   }
 
   async waitForMedia(client, type, baseline, timeoutMs, onProgress, range, control = {}) {
@@ -345,14 +457,16 @@ class MuseController {
       onProgress(5, "Đã mở tab Muse riêng cho luồng này");
       const refs = [this.imageItem(job.productImage, "product")];
       if (job.characterImage && fs.existsSync(job.characterImage)) refs.unshift(this.imageItem(job.characterImage, "character"));
-      await this.attachImages(client, refs);
-      await checkpoint();
-      const beforeVideo = new Set((await this.agentState(client)).media.map((m) => m.src));
-      const videoPrompt = this.buildVideoPrompt(job);
-      job.generatedPrompt = videoPrompt;
-      onProgress(12, `Đã tải ${refs.length} ảnh tham chiếu · chuẩn bị prompt tự động`);
-      await this.sendPrompt(client, videoPrompt, refs);
+      await this._withSendLock(async () => {
+        await this.attachImages(client, refs);
+        await checkpoint();
+        const videoPrompt = this.buildVideoPrompt(job);
+        job.generatedPrompt = videoPrompt;
+        onProgress(12, `Đã tải ${refs.length} ảnh tham chiếu · chuẩn bị prompt tự động`);
+        await this.sendPrompt(client, videoPrompt, refs);
+      });
       onProgress(18, "Đã tự điền và gửi prompt hoàn chỉnh cho Muse");
+      const beforeVideo = new Set((await this.agentState(client)).media.map((m) => m.src));
       const video = await this.waitForMedia(client, "video", beforeVideo, 20 * 60 * 1000, onProgress, [18, 94], control);
       const videoPath = await this.downloadFromPage(client, video.src, `${path.parse(job.productImage).name}-video`, "video/mp4");
       onProgress(100, "Hoàn tất và đã tải video về máy");

@@ -178,52 +178,239 @@
 
   <!-- VIEW 2: TIKTOK PUBLISHING -->
   <div id="viewTikTok" class="view-container" style="display: none;">
+    <!-- SUB-BAR TRẠNG THÁI & TÁC VỤ NHANH -->
     <div class="statusbar tiktok-statusbar">
-      <div>
-        <strong>🎵 Hàng Đợi Xuất Bản TikTok</strong>
-        <span class="counter">Tổng job: <b id="tiktokTotalCount">0</b></span>
+      <div class="tiktok-status-left">
+        <strong class="tiktok-title">🎵 Tự Động Đăng TikTok, Gắn Giỏ Hàng & Lên Lịch</strong>
+        <span class="counter" id="badgeTabTT">Tab TT: Chưa mở</span>
+        <span class="counter">Hàng đợi: <b id="cntQueue">0</b></span>
+        <span class="counter">Chờ/Lịch: <b id="cntScheduled">0</b></span>
+        <span class="counter">Đã đăng: <b id="cntPosted">0</b></span>
+        <span class="counter">Lỗi: <b id="cntFailed">0</b></span>
       </div>
-      <div class="tiktok-actions">
-        <button id="tiktokAddFiles" class="btn-primary">📁 + Thêm video từ máy</button>
-        <button id="tiktokManageAccounts" class="btn-secondary">👥 Quản lý Kênh TikTok</button>
-        <button id="tiktokRun" class="btn-success">▶ Đăng / Lên lịch</button>
-        <button id="tiktokPause" class="btn-secondary">⏸ Pause</button>
-        <button id="tiktokResume" class="btn-secondary">▶ Resume</button>
-        <button id="tiktokStop" class="btn-danger">⏹ Stop</button>
+      <div class="tiktok-status-right">
+        <button id="btnToggleAutoSchedule" class="btn-warn">⏸ Lịch tự động: ĐANG TẠM DỪNG</button>
+        <button id="btnCheckAllAccounts" class="btn-secondary">🔍 Check tất cả kênh</button>
+        <button id="btnShowAllChrome" class="btn-primary">👁 Hiện Tab TikTok</button>
+        <button id="btnHideAllChrome" class="btn-secondary">🙈 Ẩn Tab TikTok</button>
+        <button id="btnCleanCompleted" class="btn-secondary">🗑 Dọn bài Đã đăng/Lỗi</button>
       </div>
     </div>
-    <div class="tiktok-workspace">
-      <div class="filters" id="tiktokFilters">
-        <button class="active" data-filter="all">Tất cả</button>
-        <button data-filter="ready">Sẵn sàng</button>
-        <button data-filter="active">Đang chạy</button>
-        <button data-filter="done">Hoàn tất</button>
-        <button data-filter="reconcile">Cần đối soát</button>
-        <button data-filter="failed">Lỗi</button>
-        <input id="tiktokSearch" placeholder="🔍 Tìm theo tiêu đề, hashtag...">
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th><input id="tiktokSelectAll" type="checkbox"></th>
-              <th>#</th>
-              <th>VIDEO & SẢN PHẨM</th>
-              <th>KÊNH</th>
-              <th>NỘI DUNG</th>
-              <th>NHẠC</th>
-              <th>LỊCH ĐĂNG</th>
-              <th>TIẾN ĐỘ & TRẠNG THÁI</th>
-              <th>THAO TÁC</th>
-            </tr>
-          </thead>
-          <tbody id="tiktokQueueTbody"></tbody>
-        </table>
-        <div id="tiktokEmpty" class="empty-state">
-          <div>🎵</div>
-          <b>Chưa có video nào trong hàng đợi TikTok</b>
-          <p>Bấm "Thêm video từ máy" hoặc bật tự động nhận từ Xưởng Video Muse.</p>
+
+    <!-- KHU VỰC CHÍNH: 2 CỘT (SIDEBAR TRÁI + BẢNG HÀNG ĐỢI PHẢI) -->
+    <main class="tiktok-main">
+      <!-- CỘT BÊN TRÁI: CẤU HÌNH KÊNH, VIDEO, AI, LỊCH -->
+      <aside class="tiktok-aside">
+        <!-- 1. NHIỀU KÊNH TIKTOK RIÊNG BIỆT -->
+        <section class="card step">
+          <h2><i>1</i> NHIỀU KÊNH TIKTOK RIÊNG BIỆT <span id="accountLiveCount" class="live-badge">(0 LIVE / 0 kênh)</span></h2>
+          <div class="channel-select-row">
+            <select id="tiktokChannelSelect"></select>
+            <button id="btnOpenNewAccountModal" class="btn-gold" title="Thêm kênh TikTok mới">+ Kênh mới</button>
+            <button id="btnCheckCurrentAccount" class="btn-secondary" title="Kiểm tra trạng thái đăng nhập">🔍 Check</button>
+          </div>
+
+          <div id="activeAccountCard" class="channel-card">
+            <div class="channel-card-header">
+              <span class="channel-dot offline" id="activeAccountDot">●</span>
+              <strong id="activeAccountTitle">Chưa có kênh nào</strong>
+              <span id="activeAccountModeBadge" class="mode-tag">🛒 Giỏ hàng</span>
+            </div>
+            <div class="channel-card-sub">
+              <span>Cổng CDP: <b id="activeAccountPort">—</b></span>
+              <div class="channel-icon-actions">
+                <button id="btnShowAccountChrome" title="Mở cửa sổ Chrome kênh này" class="btn-icon">👁 Hiện</button>
+                <button id="btnOpenBrowserStudio" title="Mở TikTok Studio" class="btn-icon">🌐 Trình duyệt</button>
+                <button id="btnCheckAccountSingle" title="Kiểm tra đăng nhập" class="btn-icon">🔍</button>
+                <button id="btnDeleteAccount" title="Xóa kênh này" class="btn-icon delete">🗑</button>
+              </div>
+            </div>
+            <div id="activeAccountAlert" class="channel-alert" style="display: none;">
+              <span>⚠ <b id="activeAccountWarnName">Kênh</b>: Chưa đăng nhập TikTok trong cửa sổ Chrome này — hãy bấm <b>Hiện Tab</b> để đăng nhập.</span>
+              <button id="btnAlertShowTab" class="btn-xs btn-primary">👁 Hiện Tab</button>
+            </div>
+          </div>
+
+          <div class="aside-opt-row">
+            <label class="checkbox-row">
+              <input type="checkbox" id="chkAutoPushFromMuse" checked>
+              <span>Render xong tự viết AI & đưa vào Hàng đợi (Chờ kiểm tra SP trước khi lên lịch)</span>
+            </label>
+          </div>
+        </section>
+
+        <!-- 2. CHỌN VIDEO ĐÃ RENDER -->
+        <section class="card step">
+          <h2><i>2</i> CHỌN VIDEO ĐÃ RENDER</h2>
+          <div class="video-picker-toolbar">
+            <button id="btnSelectAllMuseVideos" class="btn-xs">✓ Hết</button>
+            <button id="btnDeselectAllMuseVideos" class="btn-xs">Xóa chọn</button>
+            <button id="btnAddExternalVideo" class="btn-xs btn-primary">📂 Ngoài</button>
+            <button id="btnRefreshMuseVideos" class="btn-xs" title="Làm mới danh sách">🔄</button>
+          </div>
+          <div id="museVideoList" class="video-list-scroll">
+            <div class="empty-hint">Chưa có video Muse đã render hoặc video chọn từ máy</div>
+          </div>
+          <div class="video-list-footer">
+            <span id="museVideoCountText">0 video (0 đã chọn)</span>
+          </div>
+        </section>
+
+        <!-- 3. CHẾ ĐỘ KÊNH & AI / ÂM THANH -->
+        <section class="card step">
+          <div class="card-title-row">
+            <h2><i>3</i> CHẾ ĐỘ KÊNH & AI / ÂM THANH</h2>
+            <button id="btnAIPromptSample" class="btn-xs btn-gold">✨ Viết mẫu AI</button>
+          </div>
+
+          <div class="mode-toggle-group">
+            <button id="btnModeCart" class="mode-btn active">🛒 Có Giỏ Hàng</button>
+            <button id="btnModeNoCart" class="mode-btn">🛍 Chưa Mở Giỏ Hàng</button>
+          </div>
+
+          <div class="aside-opt-row">
+            <label class="checkbox-row">
+              <input type="checkbox" id="chkAutoLinkShowcase" checked>
+              <b>Tự động gắn link SP đúng & Đổi tên Giỏ hàng (Showcase)</b>
+            </label>
+          </div>
+
+          <div class="grid2">
+            <div>
+              <label>Link / ID SP (Ưu tiên ảnh)</label>
+              <input id="inputProductLink" placeholder="ID SP TikTok (Trống - khớp theo...)">
+            </div>
+            <div>
+              <label>Tên Giỏ hàng (≤30ch)</label>
+              <input id="inputCartDisplayName" placeholder="Trống - AI tự đổi tên hay">
+            </div>
+          </div>
+
+          <div class="grid2" style="margin-top: 6px;">
+            <div>
+              <label>Phong cách viết AI</label>
+              <select id="selectAITone">
+                <option value="review">Review / Trải nghiệm</option>
+                <option value="humor">Hài hước / Hóm hỉnh</option>
+                <option value="story">Kể chuyện / Story</option>
+                <option value="sales">Bán hàng trực tiếp</option>
+              </select>
+            </div>
+            <div>
+              <label>Hashtags mặc định</label>
+              <input id="inputDefaultHashtags" value="#xuhuong #tiktokshop #review">
+            </div>
+          </div>
+
+          <div class="aside-opt-row" style="margin-top: 8px;">
+            <label class="checkbox-row">
+              <input type="checkbox" id="chkAutoWriteAI" checked>
+              <span>Tự động AI viết Tiêu đề, Mô tả & Hashtag</span>
+            </label>
+          </div>
+
+          <div class="audio-config-box">
+            <div class="audio-title">🎵 ÂM THANH & NHẠC ĐỀ XUẤT TIKTOK</div>
+            <div class="audio-options-row">
+              <label class="checkbox-row">
+                <input type="checkbox" id="chkMuteOriginal" checked>
+                <span>Tắt tiếng gốc</span>
+              </label>
+              <label class="checkbox-row">
+                <input type="checkbox" id="chkRandomMusic" checked>
+                <span>Nhạc đề xuất random</span>
+              </label>
+              <button id="btnPickAudioSource" class="btn-xs">Chọn nhạc</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. LỊCH ĐĂNG TỰ ĐỘNG -->
+        <section class="card step">
+          <h2><i>4</i> LỊCH ĐĂNG TỰ ĐỘNG</h2>
+          <select id="selectScheduleMode">
+            <option value="native_schedule">Lên lịch trực tiếp trên TikTok Studio (15p-10 ngày - Chuẩn)</option>
+            <option value="immediate">Đăng ngay lập tức</option>
+          </select>
+
+          <div class="grid2" style="margin-top: 6px;">
+            <div>
+              <label>Bắt đầu đăng lúc</label>
+              <input type="datetime-local" id="inputScheduleStart">
+            </div>
+            <div>
+              <label>Giãn cách (Phút)</label>
+              <input type="number" id="inputIntervalMinutes" value="60" min="1">
+            </div>
+          </div>
+
+          <p class="hint">Lên lịch trực tiếp trên TikTok Studio (bắt đầu lúc đã chọn, cách 60p). Đưa vào Hàng đợi để bạn Kiểm tra đúng SP Showcase trước rồi mới bấm Lên lịch tất cả.</p>
+
+          <button id="btnPushToQueue" class="btn-push-queue">➕ ĐƯA VÀO HÀNG ĐỢI CHỜ KIỂM TRA</button>
+        </section>
+      </aside>
+
+      <!-- CỘT BÊN PHẢI: BẢNG HÀNG ĐỢI XUẤT BẢN -->
+      <div class="tiktok-workspace">
+        <div class="filters" id="tiktokFilters">
+          <button class="active" data-filter="all">Tất cả</button>
+          <button data-filter="ready">Chờ kiểm / Lịch</button>
+          <button data-filter="active">Đang xử lý</button>
+          <button data-filter="done">Đã lên lịch/đăng</button>
+          <button data-filter="reconcile">Lỗi / Xác minh</button>
+          <input id="tiktokSearch" placeholder="🔍 Tìm video hoặc caption...">
         </div>
+
+        <div class="tiktok-action-bar">
+          <button id="btnVerifyShowcaseAll" class="btn-showcase-verify">🔍 Kiểm tra đúng SP Showcase</button>
+          <button id="btnScheduleAll" class="btn-schedule-all">📅 LÊN LỊCH TẤT CẢ LÊN TIKTOK</button>
+          <button id="btnSelectPending" class="btn-secondary">☑ Chọn chờ</button>
+          <button id="btnAIGenerateSelected" class="btn-secondary">✨ AI Viết chọn</button>
+          <button id="btnRunSelected" class="btn-secondary">▶ Chạy dòng chọn</button>
+          <button id="btnDeleteSelected" class="btn-secondary">🗑 Xóa chọn</button>
+        </div>
+
+        <div class="table-wrap">
+          <table class="tiktok-table">
+            <thead>
+              <tr>
+                <th width="35"><input id="tiktokSelectAll" type="checkbox"></th>
+                <th width="30">#</th>
+                <th width="200">VIDEO & KÊNH</th>
+                <th>TIÊU ĐỀ - MÔ TẢ - HASHTAG (SỬA TRỰC TIẾP ĐƯỢC)</th>
+                <th width="220">GIỎ HÀNG & KIỂM TRA SHOWCASE</th>
+                <th width="190">CHẾ ĐỘ & GIỜ ĐĂNG</th>
+                <th width="140">TRẠNG THÁI</th>
+                <th width="80">THAO TÁC</th>
+              </tr>
+            </thead>
+            <tbody id="tiktokQueueTbody"></tbody>
+          </table>
+          <div id="tiktokEmpty" class="empty-state">
+            <div>🎵</div>
+            <b>Chưa có video nào trong hàng đợi TikTok</b>
+            <p>Chọn video bên trái và bấm "➕ ĐƯA VÀO HÀNG ĐỢI CHỜ KIỂM TRA" để chuẩn bị đăng.</p>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- MODAL THÊM KÊNH MỚI TRỰC QUAN -->
+  <div id="modalAddAccount" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>➕ Thêm Kênh TikTok Mới</h3>
+        <button id="btnCloseAddAccount" class="modal-close">×</button>
+      </div>
+      <div class="modal-body">
+        <label>Tên gợi nhớ cho kênh (ví dụ: Kênh TikTok #1, Kênh Thời Trang...):</label>
+        <input type="text" id="inputNewAccountLabel" placeholder="Nhập tên kênh..." value="Kênh TikTok #1">
+        <p class="modal-note">Mỗi kênh được cấp một profile trình duyệt Chrome độc lập (cổng riêng), hoàn toàn cách ly cookie và phiên đăng nhập.</p>
+      </div>
+      <div class="modal-footer">
+        <button id="btnCancelAddAccount" class="btn-secondary">Hủy</button>
+        <button id="btnConfirmAddAccount" class="btn-primary">✓ Tạo & Mở Đăng Nhập</button>
       </div>
     </div>
   </div>
