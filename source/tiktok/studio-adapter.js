@@ -827,24 +827,22 @@ class StudioAdapter {
     }
     if (!productPickerReady) throw new Error("TikTok không mở danh sách sản phẩm sau khi bấm Next trong 30 giây.");
 
-    // 3. Search product
-    const kw = lockedProductId;
-    if (kw) {
-      await this.evaluate(`((searchVal) => {
-        const inputs = Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])'));
-        const inp = inputs.find(i => {
-          const ph = (i.placeholder || i.getAttribute('aria-label') || '').toLowerCase();
-          return ph.includes('tìm') || ph.includes('search') || ph.includes('id') || ph.includes('sản phẩm');
-        }) || inputs[0];
-        if (inp) {
-          inp.focus();
-          inp.value = searchVal;
-          inp.dispatchEvent(new Event('input', { bubbles: true }));
-          inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
-        }
-      })(${JSON.stringify(kw)})`);
-      await sleep(2000);
-    }
+    // 3. Ensure search box is clean so full Showcase catalog is visible
+    await this.evaluate(`(() => {
+      const inputs = Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])'));
+      const inp = inputs.find(i => {
+        const ph = (i.placeholder || i.getAttribute('aria-label') || '').toLowerCase();
+        return ph.includes('tìm') || ph.includes('search') || ph.includes('id') || ph.includes('sản phẩm');
+      });
+      if (inp && inp.value) {
+        inp.focus();
+        inp.value = '';
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        inp.dispatchEvent(new Event('change', { bubbles: true }));
+        inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+      }
+    })()`);
+    await sleep(800);
 
     // 4. Select the row matching Product ID (or keyword) across pages
     let selected = null;
@@ -858,10 +856,17 @@ class StudioAdapter {
             const val = row.getAttribute && row.getAttribute(name);
             if (val && String(val).trim() === wantedId) return wantedId;
           }
-          const nodes = [row, ...Array.from(row.querySelectorAll('[data-product-id],[data-id],[data-item-id],a[href]'))];
+          const rowText = row.innerText || '';
+          if (rowText.includes(wantedId)) return wantedId;
+          const tokens = rowText.split(/[^0-9]+/);
+          if (tokens.includes(wantedId)) return wantedId;
+          const nodes = [row, ...Array.from(row.querySelectorAll('td, div, span, p, a, [data-product-id],[data-id],[data-item-id]'))];
           for (const node of nodes) {
-            const values = [node.getAttribute?.('data-product-id'), node.getAttribute?.('data-id'), node.getAttribute?.('data-item-id'), node.getAttribute?.('href'), node.innerText];
-            if (values.some(v => String(v || '').split(/[^0-9]+/).includes(wantedId))) return wantedId;
+            for (const name of attrs) {
+              const val = node.getAttribute && node.getAttribute(name);
+              if (val && String(val).trim() === wantedId) return wantedId;
+            }
+            if ((node.innerText || '').includes(wantedId)) return wantedId;
           }
           return '';
         };
@@ -881,22 +886,30 @@ class StudioAdapter {
       if (selected?.ok) break;
 
       const paged = await this.evaluate(`(() => {
-        const a = document.querySelector(
-          '.product-selector-modal .tiktok-pagination-item-right-arrow, ' +
-          '.tiktok-pagination-item-right-arrow, ' +
-          'li.arco-pagination-next:not(.arco-pagination-disabled), ' +
-          'li[class*="pagination-next"]:not([class*="disabled"]), ' +
-          'button[aria-label*="next page" i]:not([disabled]), ' +
-          'button[aria-label*="trang sau" i]:not([disabled]), ' +
-          'button[aria-label*="trang tiếp" i]:not([disabled]), ' +
-          '[data-e2e="pagination-next"]:not([disabled])'
-        );
+        const selectors = [
+          '.product-selector-modal .tiktok-pagination-item-right-arrow',
+          '.tiktok-pagination-item-right-arrow',
+          'li.arco-pagination-next:not(.arco-pagination-disabled)',
+          'li[class*="pagination-next"]:not([class*="disabled"])',
+          'li[class*="pagination-item-next"]:not([class*="disabled"])',
+          'li.semi-page-item-next:not([class*="disabled"])',
+          'button[aria-label*="next page" i]:not([disabled])',
+          'button[aria-label*="trang sau" i]:not([disabled])',
+          'button[aria-label*="trang tiếp" i]:not([disabled])',
+          '[data-e2e="pagination-next"]:not([disabled])',
+          '.tiktok-pagination-next:not([class*="disabled"])'
+        ];
+        let a = null;
+        for (const sel of selectors) {
+          a = document.querySelector(sel);
+          if (a) break;
+        }
         if (!a) return false;
         if (a.disabled || a.classList.contains('tiktok-pagination-item-disabled') ||
             a.classList.contains('arco-pagination-disabled') || a.getAttribute('aria-disabled') === 'true') {
           return false;
         }
-        a.click();
+        try { (a.querySelector('a, button, span') || a).click(); } catch (_) { a.click(); }
         return true;
       })()`);
 
@@ -1011,19 +1024,23 @@ class StudioAdapter {
       throw new Error("Kênh TikTok này chưa có sản phẩm nào trong mục Trưng bày (Showcase). Hãy mở app TikTok trên điện thoại > Hồ sơ > TikTok Shop để thêm sản phẩm vào Trưng bày trước khi gắn giỏ hàng.");
     }
 
-    await this.evaluate(`((searchVal) => {
+    // 1. Ensure search input is clean so full Showcase catalog is visible across pages
+    await this.evaluate(`(() => {
       const inputs = Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])'));
-      const inp = inputs.find(i => { const ph = (i.placeholder || i.getAttribute('aria-label') || '').toLowerCase(); return ph.includes('search') || ph.includes('tìm') || ph.includes('product') || ph.includes('sản phẩm') || ph.includes('id'); });
-      if (!inp) return false;
-      inp.focus();
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      if (setter) setter.call(inp, searchVal); else inp.value = searchVal;
-      inp.dispatchEvent(new Event('input', { bubbles: true }));
-      inp.dispatchEvent(new Event('change', { bubbles: true }));
-      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
-      return true;
-    })(${JSON.stringify(lockedProductId)})`);
-    await sleep(1200);
+      const inp = inputs.find(i => {
+        const ph = (i.placeholder || i.getAttribute('aria-label') || '').toLowerCase();
+        return ph.includes('search') || ph.includes('tìm') || ph.includes('product') || ph.includes('sản phẩm') || ph.includes('id');
+      });
+      if (inp && inp.value) {
+        inp.focus();
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (setter) setter.call(inp, ''); else inp.value = '';
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        inp.dispatchEvent(new Event('change', { bubbles: true }));
+        inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+      }
+    })()`);
+    await sleep(800);
 
     // Helper to find matching row on current page
     const findRowCoords = async (wantedId, wantedKw) => {
@@ -1035,10 +1052,18 @@ class StudioAdapter {
             const val = row.getAttribute && row.getAttribute(name);
             if (val && String(val).trim() === wantedId) return wantedId;
           }
-          const nodes = [row, ...Array.from(row.querySelectorAll('[data-product-id],[data-id],[data-item-id],a[href]'))];
+          const rowText = row.innerText || '';
+          if (rowText.includes(wantedId)) return wantedId;
+          const tokens = rowText.split(/[^0-9]+/);
+          if (tokens.includes(wantedId)) return wantedId;
+
+          const nodes = [row, ...Array.from(row.querySelectorAll('td, div, span, p, a, [data-product-id],[data-id],[data-item-id]'))];
           for (const node of nodes) {
-            const vals = [node.getAttribute?.('data-product-id'), node.getAttribute?.('data-id'), node.getAttribute?.('data-item-id'), node.getAttribute?.('href'), node.innerText];
-            if (vals.some(v => String(v || '').split(/[^0-9]+/).includes(wantedId))) return wantedId;
+            for (const name of attrs) {
+              const val = node.getAttribute && node.getAttribute(name);
+              if (val && String(val).trim() === wantedId) return wantedId;
+            }
+            if ((node.innerText || '').includes(wantedId)) return wantedId;
           }
           return '';
         };
@@ -1065,21 +1090,30 @@ class StudioAdapter {
     // Helper to click next page in pagination
     const clickNextPage = async () => {
       const nextCoords = await this.evaluate(`(() => {
-        const a = document.querySelector(
-          '.product-selector-modal .tiktok-pagination-item-right-arrow, ' +
-          '.tiktok-pagination-item-right-arrow, ' +
-          'li.arco-pagination-next:not(.arco-pagination-disabled), ' +
-          'li[class*="pagination-next"]:not([class*="disabled"]), ' +
-          'button[aria-label*="next page" i]:not([disabled]), ' +
-          'button[aria-label*="trang sau" i]:not([disabled]), ' +
-          'button[aria-label*="trang tiếp" i]:not([disabled]), ' +
-          '[data-e2e="pagination-next"]:not([disabled])'
-        );
+        const selectors = [
+          '.product-selector-modal .tiktok-pagination-item-right-arrow',
+          '.tiktok-pagination-item-right-arrow',
+          'li.arco-pagination-next:not(.arco-pagination-disabled)',
+          'li[class*="pagination-next"]:not([class*="disabled"])',
+          'li[class*="pagination-item-next"]:not([class*="disabled"])',
+          'li.semi-page-item-next:not([class*="disabled"])',
+          'button[aria-label*="next page" i]:not([disabled])',
+          'button[aria-label*="trang sau" i]:not([disabled])',
+          'button[aria-label*="trang tiếp" i]:not([disabled])',
+          '[data-e2e="pagination-next"]:not([disabled])',
+          '.tiktok-pagination-next:not([class*="disabled"])'
+        ];
+        let a = null;
+        for (const sel of selectors) {
+          a = document.querySelector(sel);
+          if (a) break;
+        }
         if (!a) return null;
         if (a.disabled || a.classList.contains('tiktok-pagination-item-disabled') ||
             a.classList.contains('arco-pagination-disabled') || a.getAttribute('aria-disabled') === 'true') {
           return null;
         }
+        try { (a.querySelector('a, button, span') || a).click(); } catch (_) { a.click(); }
         const r = a.getBoundingClientRect();
         return r.width > 0 ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } : null;
       })()`);
@@ -1109,26 +1143,30 @@ class StudioAdapter {
       if (!hasNext) break;
     }
 
-    if (!selected?.ok) {
-      // Clear search box to show all products, and paginate from page 1
-      await this.evaluate(`(() => {
+    // Fallback: If not found across pages by ID, and user specified a text keyword (not numeric), try typing text keyword
+    const textKeyword = String(productTarget?.keyword || productTarget?.searchKeyword || "").trim();
+    const hasMeaningfulTextKeyword = textKeyword && !/^[0-9]+$/.test(textKeyword) && textKeyword !== lockedProductId;
+    if (!selected?.ok && hasMeaningfulTextKeyword) {
+      const typed = await this.evaluate(`((kw) => {
         const inputs = Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])'));
         const inp = inputs.find(i => { const ph = (i.placeholder || i.getAttribute('aria-label') || '').toLowerCase(); return ph.includes('search') || ph.includes('tìm') || ph.includes('product') || ph.includes('sản phẩm') || ph.includes('id'); });
-        if (!inp) return;
+        if (!inp) return false;
         inp.focus();
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-        if (setter) setter.call(inp, ''); else inp.value = '';
+        if (setter) setter.call(inp, kw); else inp.value = kw;
         inp.dispatchEvent(new Event('input', { bubbles: true }));
         inp.dispatchEvent(new Event('change', { bubbles: true }));
         inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
-      })()`);
-      await sleep(1500);
-
-      for (let page = 1; page <= maxSearchPages; page++) {
-        selected = await findRowCoords(lockedProductId, productTarget?.keyword || productTarget?.searchKeyword || "");
-        if (selected?.ok) break;
-        const hasNext = await clickNextPage();
-        if (!hasNext) break;
+        return true;
+      })(${JSON.stringify(textKeyword.slice(0, 30))})`);
+      if (typed) {
+        await sleep(1500);
+        for (let page = 1; page <= 5; page++) {
+          selected = await findRowCoords(lockedProductId, textKeyword);
+          if (selected?.ok) break;
+          const hasNext = await clickNextPage();
+          if (!hasNext) break;
+        }
       }
     }
 
