@@ -794,18 +794,36 @@ class StudioAdapter {
     if (!advanced) throw new Error("Hộp Add link không có nút Next hoặc danh sách sản phẩm.");
 
     let productPickerReady = false;
+    let showcaseEmpty = false;
     const pickerDeadline = Date.now() + 30000;
     while (Date.now() < pickerDeadline) {
-      productPickerReady = await this.evaluate(`(() => {
+      const status = await this.evaluate(`(() => {
+        const modal = document.querySelector('.product-selector-modal, [role="dialog"], .TUXModal, div[class*="modal" i]') || document;
+        const text = (modal.innerText || '').toLowerCase();
+        if (/no products in your showcase|không có sản phẩm nào trong mục trưng bày|chưa có sản phẩm trong mục trưng bày|go to tiktok app/i.test(text)) {
+          return { ready: true, empty: true };
+        }
         const input = Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])')).find(i => {
           const ph = (i.placeholder || i.getAttribute('aria-label') || '').toLowerCase();
           return ph.includes('tìm') || ph.includes('search') || ph.includes('id') || ph.includes('sản phẩm') || ph.includes('product');
         });
         const row = document.querySelector('.product-selector-modal .product-tb-row, .product-table-container .product-tb-row, tr.product-tb-row, tbody tr, [data-product-id], div[class*="product-item" i], div[class*="product-card" i]');
-        return Boolean(input || row);
-      })()`).catch(() => false);
-      if (productPickerReady) break;
+        return { ready: Boolean(input || row), empty: false };
+      })()`).catch(() => ({ ready: false, empty: false }));
+      if (status.ready) {
+        productPickerReady = true;
+        showcaseEmpty = Boolean(status.empty);
+        break;
+      }
       await sleep(500);
+    }
+    if (showcaseEmpty) {
+      await this.evaluate(`(() => {
+        const modal = document.querySelector('.product-selector-modal, [role="dialog"], .TUXModal') || document;
+        const cancelBtn = Array.from(modal.querySelectorAll('button')).find(b => /^(hủy|huỷ|cancel|close|đóng)$/i.test((b.innerText || '').trim()));
+        if (cancelBtn) cancelBtn.click();
+      })()`).catch(() => {});
+      throw new Error("Kênh TikTok này chưa có sản phẩm nào trong mục Trưng bày (Showcase). Hãy mở app TikTok trên điện thoại > Hồ sơ > TikTok Shop để thêm sản phẩm vào Trưng bày trước khi gắn giỏ hàng.");
     }
     if (!productPickerReady) throw new Error("TikTok không mở danh sách sản phẩm sau khi bấm Next trong 30 giây.");
 
@@ -967,10 +985,31 @@ class StudioAdapter {
     })()`), 20000, "Hộp Add link chưa bật nút Next.");
     await this.physicalClick(firstNext);
 
-    await waitFor(() => this.evaluate(`(() => Boolean(Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])')).find(i => {
-      const ph = (i.placeholder || i.getAttribute('aria-label') || '').toLowerCase();
-      return ph.includes('search') || ph.includes('tìm') || ph.includes('product') || ph.includes('sản phẩm') || ph.includes('id');
-    })))()`), 30000, "TikTok không mở danh sách sản phẩm sau khi bấm Next.");
+    await waitFor(() => this.evaluate(`(() => {
+      const modal = document.querySelector('.product-selector-modal, [role="dialog"], .TUXModal, div[class*="modal" i]') || document;
+      const text = (modal.innerText || '').toLowerCase();
+      if (/no products in your showcase|không có sản phẩm nào trong mục trưng bày|chưa có sản phẩm trong mục trưng bày|go to tiktok app/i.test(text)) {
+        return true;
+      }
+      return Boolean(Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])')).find(i => {
+        const ph = (i.placeholder || i.getAttribute('aria-label') || '').toLowerCase();
+        return ph.includes('search') || ph.includes('tìm') || ph.includes('product') || ph.includes('sản phẩm') || ph.includes('id');
+      }) || document.querySelector('.product-tb-row, tr.product-tb-row, tbody tr'));
+    })()`), 30000, "TikTok không mở danh sách sản phẩm sau khi bấm Next.");
+
+    const isShowcaseEmpty = await this.evaluate(`(() => {
+      const modal = document.querySelector('.product-selector-modal, [role="dialog"], .TUXModal, div[class*="modal" i]') || document;
+      const text = (modal.innerText || '').toLowerCase();
+      return /no products in your showcase|không có sản phẩm nào trong mục trưng bày|chưa có sản phẩm trong mục trưng bày|go to tiktok app/i.test(text);
+    })()`);
+    if (isShowcaseEmpty) {
+      await this.evaluate(`(() => {
+        const modal = document.querySelector('.product-selector-modal, [role="dialog"], .TUXModal') || document;
+        const cancelBtn = Array.from(modal.querySelectorAll('button')).find(b => /^(hủy|huỷ|cancel|close|đóng)$/i.test((b.innerText || '').trim()));
+        if (cancelBtn) cancelBtn.click();
+      })()`).catch(() => {});
+      throw new Error("Kênh TikTok này chưa có sản phẩm nào trong mục Trưng bày (Showcase). Hãy mở app TikTok trên điện thoại > Hồ sơ > TikTok Shop để thêm sản phẩm vào Trưng bày trước khi gắn giỏ hàng.");
+    }
 
     await this.evaluate(`((searchVal) => {
       const inputs = Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])'));
