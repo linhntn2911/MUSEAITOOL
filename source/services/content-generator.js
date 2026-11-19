@@ -4,6 +4,7 @@ const https = require("node:https");
 const { deduplicateHashtags } = require("../models/validators");
 const { createError, ERROR_CODES } = require("../core/errors");
 const { logger } = require("../core/redacted-log");
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function validateGeneratedContent(raw = {}) {
   const title = (raw.title || "Video TikTok").trim().substring(0, 60);
@@ -24,14 +25,14 @@ function validateGeneratedContent(raw = {}) {
   };
 }
 
-async function callGeminiApi({ apiKey, model = "gemini-3.8-flash", systemPrompt, userPrompt, imageBase64 }) {
+async function callGeminiApi({ apiKey, model = "gemini-3.8-flash", systemPrompt, userPrompt, imageBase64, imageMimeType = "image/jpeg" }) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
   const parts = [];
   if (imageBase64) {
     parts.push({
-      inline_data: {
-        mime_type: "image/jpeg",
+      inlineData: {
+        mimeType: imageMimeType,
         data: imageBase64
       }
     });
@@ -40,12 +41,23 @@ async function callGeminiApi({ apiKey, model = "gemini-3.8-flash", systemPrompt,
 
   const requestBody = {
     contents: [{ role: "user", parts }],
-    system_instruction: {
+    systemInstruction: {
       parts: [{ text: systemPrompt }]
     },
     generationConfig: {
-      response_mime_type: "application/json",
-      temperature: 0.7
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "OBJECT",
+        required: ["title", "caption", "hashtags", "cartTitle", "productKeywords"],
+        properties: {
+          title: { type: "STRING" },
+          caption: { type: "STRING" },
+          hashtags: { type: "ARRAY", items: { type: "STRING" } },
+          cartTitle: { type: "STRING" },
+          productKeywords: { type: "ARRAY", items: { type: "STRING" } }
+        }
+      },
+      temperature: 0.65
     }
   };
 
@@ -66,7 +78,8 @@ async function callGeminiApi({ apiKey, model = "gemini-3.8-flash", systemPrompt,
           if (!text) {
             return reject(createError(ERROR_CODES.AI_RESPONSE_INVALID, "Gemini không trả về nội dung hợp lệ"));
           }
-          const contentJson = JSON.parse(text);
+          const cleanText = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+          const contentJson = JSON.parse(cleanText);
           resolve(validateGeneratedContent(contentJson));
         } catch (err) {
           reject(createError(ERROR_CODES.AI_RESPONSE_INVALID, `Lỗi parse JSON phản hồi từ Gemini: ${err.message}`));
@@ -89,7 +102,7 @@ async function generateContentForJob(job, options = {}) {
   const apiKey = options.apiKey;
   const tone = options.tone || job.content?.tone || "review";
   const hasCart = job.accountMode === "affiliate";
-  const model = options.model || "gemini-3.8-flash";
+  const model = options.model || "gemini-3.5-flash-lite";
 
   // System instruction with no_cart constraint enforcement
   let systemPrompt = `Bạn là trợ lý sáng tạo nội dung TikTok chuyên nghiệp bằng tiếng Việt.
@@ -113,24 +126,30 @@ Bài đăng này KHÔNG có giỏ hàng TikTok Shop. BẠN TUYỆT ĐỐI KHÔNG
 ${job.sourcePrompt || "Sản phẩm video chất lượng cao"}
 Vui lòng trả lời bằng duy nhất một khối JSON hợp lệ.`;
 
-  if (!apiKey) {
-    // Fallback template content when no key provided (keeps existing content if present)
-    return validateGeneratedContent({
-      title: job.content?.title || "Video review sản phẩm nổi bật",
-      caption: job.content?.caption || (hasCart ? "Sản phẩm siêu chất lượng, mọi người tham khảo nhé! 👇" : "Trải nghiệm hình ảnh cực đẹp cùng sản phẩm!"),
-      hashtags: job.content?.hashtags?.length ? job.content.hashtags : ["#fyp", "#xuhuong", "#review"],
-      cartTitle: hasCart ? (job.content?.cartTitle || "Sản phẩm nổi bật") : "",
-      productKeywords: ["sản phẩm"]
-    });
-  }
+  if (!apiKey) throw new Error("Chưa cấu hình Gemini API key. Hãy nhập key và bấm Lưu & kiểm tra.");
 
-  return await callGeminiApi({
-    apiKey,
-    model,
-    systemPrompt,
-    userPrompt,
-    imageBase64: options.imageBase64 || null
-  });
+  const models = Array.from(new Set([model, "gemini-3.5-flash-lite", "gemini-3.6-flash"]));
+  let lastError = null;
+  for (const candidateModel of models) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await callGeminiApi({
+          apiKey,
+          model: candidateModel,
+          systemPrompt,
+          userPrompt,
+          imageBase64: options.imageBase64 || null,
+          imageMimeType: options.imageMimeType || "image/jpeg"
+        });
+      } catch (error) {
+        lastError = error;
+        const transient = /HTTP (429|500|502|503|504)|UNAVAILABLE|quá tải|high demand|Timeout/i.test(error.message || "");
+        if (!transient) throw error;
+        if (attempt === 0) await delay(700);
+      }
+    }
+  }
+  throw lastError || new Error("Không gọi được Gemini sau nhiều lần thử.");
 }
 
 module.exports = {

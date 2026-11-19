@@ -53,11 +53,11 @@
           <h2><i>1</i> NỘI DUNG & PROMPT VIDEO</h2>
           <textarea id="prompt" rows="7" spellcheck="false">Sản phẩm chính nằm trong CHỈ MỘT hộp mica/acrylic trong suốt có quai xách ở tiền cảnh. Một bàn tay nữ cầm quai giới thiệu hộp. Camera wide-angle 24–28mm, đứng đủ xa, nhìn thấy trọn hộp từ quai đến đáy và phần lớn cửa hàng phía sau. Hộp chiếm khoảng 45–55% chiều cao khung hình, tạo nhiều khoảng thở để thấy rõ quy mô cửa hàng. Tôi muốn đặt số lượng lớn sản phẩm như trên ảnh vào hộp.</textarea>
           <div class="chips">
-            <button data-preset="studio">🧪 Studio</button>
-            <button data-preset="luxury">💄 Luxury</button>
+            <button data-preset="fashion">👗 Thời trang</button>
+            <button data-preset="household" class="active">🏠 Gia dụng</button>
             <button data-preset="store">🏬 Cửa hàng</button>
           </div>
-          <p class="hint">Muse tự ghép prompt này với từng ảnh sản phẩm, tạo ảnh bố cục trước rồi tạo video.</p>
+          <p id="promptPresetHint" class="hint">Gia dụng: ảnh sản phẩm được đặt trong hộp mica; người cầm hộp tuyệt đối không lộ mặt.</p>
         </section>
         <section class="card step">
           <h2><i>2</i> THÔNG SỐ VIDEO</h2>
@@ -141,6 +141,8 @@
           <button data-filter="error">Bị lỗi</button>
           <input id="search" placeholder="🔍 Tìm theo tên ảnh hoặc prompt...">
           <button id="selectErrors">☑ Chọn Chờ/Lỗi</button>
+          <button id="selectCompleted">☑ Chọn video xong</button>
+          <button id="deleteCompletedVideos" class="delete">🗑 Xóa video + dòng</button>
         </div>
         <div class="table-wrap">
           <table>
@@ -302,6 +304,15 @@
             </div>
           </div>
 
+          <div class="ai-key-box">
+            <label>Gemini API key <span id="geminiKeyStatus" class="ai-key-status">Chưa kiểm tra</span></label>
+            <div class="ai-key-row">
+              <input id="inputGeminiApiKey" type="password" autocomplete="off" placeholder="Dán Gemini API key tại đây">
+              <button id="btnSaveGeminiKey" class="btn-xs btn-gold">Lưu & kiểm tra</button>
+            </div>
+            <div class="hint">Key được mã hóa và lưu trên máy này; AI dùng prompt cùng ảnh sản phẩm để viết caption.</div>
+          </div>
+
           <div class="aside-opt-row" style="margin-top: 8px;">
             <label class="checkbox-row">
               <input type="checkbox" id="chkAutoWriteAI" checked>
@@ -314,7 +325,7 @@
             <div class="audio-options-row">
               <label class="checkbox-row">
                 <input type="checkbox" id="chkMuteOriginal" checked>
-                <span>Tắt tiếng gốc</span>
+                <span>Giữ tiếng gốc</span>
               </label>
               <label class="checkbox-row">
                 <input type="checkbox" id="chkRandomMusic" checked>
@@ -362,7 +373,8 @@
         </div>
 
         <div class="tiktok-action-bar">
-          <button id="btnVerifyShowcaseAll" class="btn-showcase-verify">🔍 Kiểm tra đúng SP Showcase</button>
+          <button id="btnSyncShowcase" class="btn-showcase-verify">🔄 Đồng bộ Showcase</button>
+          <button id="btnVerifyShowcaseAll" class="btn-showcase-verify">🔍 Đối chiếu ảnh SP</button>
           <button id="btnScheduleAll" class="btn-schedule-all">📅 LÊN LỊCH TẤT CẢ LÊN TIKTOK</button>
           <button id="btnSelectPending" class="btn-secondary">☑ Chọn chờ</button>
           <button id="btnAIGenerateSelected" class="btn-secondary">✨ AI Viết chọn</button>

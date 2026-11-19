@@ -21,7 +21,7 @@ test("StateStore schema migration and structure", async (t) => {
     assert.deepStrictEqual(state.tiktok.accounts, []);
     assert.deepStrictEqual(state.tiktok.jobs, []);
     assert.strictEqual(state.tiktok.settings.intervalMinutes, 60);
-    assert.strictEqual(state.tiktok.settings.geminiModel, "gemini-3.8-flash");
+    assert.strictEqual(state.tiktok.settings.geminiModel, "gemini-3.5-flash-lite");
   });
 
   await t.test("Idempotently migrates v1 Muse state without losing existing queue", () => {

@@ -5,7 +5,7 @@ const path = require("node:path");
 const { validateSettings, validateAccountsList, validateJob } = require("../models/validators");
 const { logger } = require("./redacted-log");
 
-const CURRENT_SCHEMA_VERSION = 2;
+const CURRENT_SCHEMA_VERSION = 3;
 
 function createInitialTikTokState() {
   return {
@@ -14,6 +14,8 @@ function createInitialTikTokState() {
     jobs: [],
     mediaAssets: [],
     contentProfiles: [],
+    showcaseCatalog: {},
+    productMappings: [],
     control: {
       globalPaused: false,
       activeAccountLocks: {}
@@ -117,6 +119,8 @@ class StateStore {
         jobs: Array.isArray(existingTikTok.jobs) ? existingTikTok.jobs.map(j => validateJob(j)) : [],
         mediaAssets: Array.isArray(existingTikTok.mediaAssets) ? existingTikTok.mediaAssets : [],
         contentProfiles: Array.isArray(existingTikTok.contentProfiles) ? existingTikTok.contentProfiles : [],
+        showcaseCatalog: existingTikTok.showcaseCatalog && typeof existingTikTok.showcaseCatalog === "object" ? existingTikTok.showcaseCatalog : {},
+        productMappings: Array.isArray(existingTikTok.productMappings) ? existingTikTok.productMappings : [],
         control: existingTikTok.control || { globalPaused: false, activeAccountLocks: {} }
       };
 
@@ -129,6 +133,8 @@ class StateStore {
       state.tiktok.jobs = Array.isArray(state.tiktok.jobs) ? state.tiktok.jobs.map(j => validateJob(j)) : [];
       state.tiktok.mediaAssets = Array.isArray(state.tiktok.mediaAssets) ? state.tiktok.mediaAssets : [];
       state.tiktok.contentProfiles = Array.isArray(state.tiktok.contentProfiles) ? state.tiktok.contentProfiles : [];
+      state.tiktok.showcaseCatalog = state.tiktok.showcaseCatalog && typeof state.tiktok.showcaseCatalog === "object" ? state.tiktok.showcaseCatalog : {};
+      state.tiktok.productMappings = Array.isArray(state.tiktok.productMappings) ? state.tiktok.productMappings : [];
       state.tiktok.control = state.tiktok.control || { globalPaused: false, activeAccountLocks: {} };
     }
 

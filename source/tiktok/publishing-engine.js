@@ -119,12 +119,14 @@ class PublishingEngine {
       await adapter.uploadVideo(videoPath);
 
       // Optional Audio & Music edit
-      if (job.options?.muteOriginalSound || job.options?.addRecommendedMusic) {
+      const muteOriginalSound = job.options?.muteOriginalSound ?? (Number(job.audio?.originalVolume) === 0);
+      const addRecommendedMusic = job.options?.addRecommendedMusic ?? Boolean(job.audio?.addRecommendedMusic);
+      if (muteOriginalSound || addRecommendedMusic) {
         if (typeof adapter.editAudioAndMusic === "function") {
           updateJobStatus(JOB_STATUSES.PROCESSING_AUDIO, "Đang tắt tiếng gốc & chèn nhạc đề xuất");
           await adapter.editAudioAndMusic({
-            muteOriginalSound: Boolean(job.options?.muteOriginalSound),
-            addRecommendedMusic: Boolean(job.options?.addRecommendedMusic)
+            muteOriginalSound,
+            addRecommendedMusic
           }).catch(err => logger.warn("publishing-engine", `Lỗi chỉnh nhạc/âm thanh: ${err.message}`));
         }
       }
@@ -138,15 +140,21 @@ class PublishingEngine {
 
       // Optional Showcase Product Cart attachment
       if (job.accountMode === "affiliate" || (job.productMatch && job.productMatch.confirmed)) {
-        if (typeof adapter.attachProductCart === "function") {
+        if (typeof adapter.attachProductCartVerified === "function" || typeof adapter.attachProductCart === "function") {
           updateJobStatus(JOB_STATUSES.ATTACHING_PRODUCT || JOB_STATUSES.FILLING_METADATA, "Đang gắn giỏ hàng sản phẩm Showcase");
-          await adapter.attachProductCart(
+          const attachProduct = typeof adapter.attachProductCartVerified === "function"
+            ? adapter.attachProductCartVerified.bind(adapter)
+            : adapter.attachProductCart.bind(adapter);
+          const cartEvidence = await attachProduct(
             {
               productId: job.productMatch?.productId || job.productId || "",
               keyword: job.productMatch?.productName || job.productKeyword || ""
             },
-            job.productMatch?.displayName || job.productDisplayName || ""
-          ).catch(err => logger.warn("publishing-engine", `Lỗi gắn sản phẩm giỏ hàng: ${err.message}`));
+            job.productMatch?.displayName || job.productDisplayName || job.productMatch?.productName || ""
+          );
+          if (!cartEvidence?.ok || String(cartEvidence.productId || "") !== String(job.productMatch?.productId || "")) {
+            throw createError(ERROR_CODES.PRODUCT_UNVERIFIED, "TikTok chưa xác nhận đúng Product ID đã khóa; dừng bài để tránh gắn nhầm giỏ hàng.");
+          }
         }
       }
 

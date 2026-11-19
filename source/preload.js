@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("museApp", {
   previewFiles: (paths) => ipcRenderer.invoke("files:preview", paths),
   addJobs: (jobs) => ipcRenderer.invoke("queue:add", jobs),
   removeJobs: (ids) => ipcRenderer.invoke("queue:remove", ids),
+  deleteCompletedVideos: (ids) => ipcRenderer.invoke("queue:delete-completed-videos", ids),
   retryJobs: (ids) => ipcRenderer.invoke("queue:retry", ids),
   runQueue: () => ipcRenderer.invoke("queue:run"),
   pauseQueue: () => ipcRenderer.invoke("queue:pause"),
@@ -54,9 +55,12 @@ contextBridge.exposeInMainWorld("tiktokApp", {
   // Content & Products
   testApiKey: (apiKey) => ipcRenderer.invoke("tiktok:content:test-key", { apiKey }),
   saveApiKey: (apiKey) => ipcRenderer.invoke("tiktok:content:save-key", { apiKey }),
+  getApiKeyStatus: () => ipcRenderer.invoke("tiktok:content:key-status"),
   generateContent: (jobIds, options) => ipcRenderer.invoke("tiktok:content:generate", { jobIds, options }),
   restoreContent: (jobIds) => ipcRenderer.invoke("tiktok:content:restore", { jobIds }),
-  verifyProduct: (jobIds) => ipcRenderer.invoke("tiktok:products:verify", { jobIds }),
+  updateSettings: (patch) => ipcRenderer.invoke("tiktok:settings:update", { patch }),
+  syncShowcase: (accountId) => ipcRenderer.invoke("tiktok:products:sync-showcase", { accountId }),
+  verifyProduct: (jobIds) => ipcRenderer.invoke("tiktok:products:verify", { jobIds: Array.isArray(jobIds) ? jobIds : [jobIds] }),
   confirmProduct: (jobId, productId) => ipcRenderer.invoke("tiktok:products:confirm", { jobId, productId }),
 
   // Audio & Media

@@ -42,13 +42,14 @@ function createDefaultSettings() {
     intervalMinutes: 60,
     defaultAudio: {
       enabled: true,
-      originalVolume: 0,
+      originalVolume: 100,
+      addRecommendedMusic: true,
       musicVolume: 85,
       loop: true,
       fadeInSeconds: 0,
       fadeOutSeconds: 0.5
     },
-    geminiModel: "gemini-3.8-flash",
+    geminiModel: "gemini-3.5-flash-lite",
     showTikTokWindows: false
   };
 }
@@ -164,6 +165,9 @@ function validateContent(content = {}) {
   const hashtags = deduplicateHashtags(content.hashtags || []).slice(0, 30);
   const tone = content.tone || "review";
   const versionHistory = Array.isArray(content.versionHistory) ? content.versionHistory : [];
+  const productKeywords = Array.isArray(content.productKeywords)
+    ? content.productKeywords.map(v => String(v).trim()).filter(Boolean).slice(0, 5)
+    : [];
 
   return {
     title,
@@ -171,8 +175,11 @@ function validateContent(content = {}) {
     hashtags,
     cartTitle,
     tone,
+    productKeywords,
     versionHistory,
-    generatedAt: content.generatedAt || null
+    generatedAt: content.generatedAt || null,
+    generationStatus: content.generationStatus || "idle",
+    generationError: content.generationError || null
   };
 }
 

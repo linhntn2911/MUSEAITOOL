@@ -91,6 +91,12 @@ class TikTokController {
           accountId: tt.accounts.length > 0 ? tt.accounts[0].id : null,
           accountMode: tt.settings.accountMode || "affiliate",
           audio: Object.assign({}, tt.settings.defaultAudio),
+          schedule: {
+            mode: tt.settings.scheduleMode || "immediate",
+            targetTime: tt.settings.scheduleMode === "native_schedule"
+              ? new Date(Date.now() + (tt.settings.firstDelayMinutes || 0) * 60000).toISOString()
+              : null
+          },
           status: "draft",
           progress: 0,
           progressText: "Chờ cấu hình",

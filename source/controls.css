@@ -11,4 +11,7 @@
 .statusbar button { white-space: nowrap; }
 .prompt-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 1.35; max-width: 280px; }
 td.prompt { width: 280px; max-width: 280px; white-space: normal; }
+.chips button.active { background: #f5a400; color: #2e1b00; border-color: #d67d00; }
+.filters { flex-wrap: wrap; }
+#deleteCompletedVideos { background: #ffe1e4; color: #b51e31; }
 @media (max-width: 1200px) { .statusbar { overflow-x: auto; } }

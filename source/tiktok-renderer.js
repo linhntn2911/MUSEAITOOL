@@ -53,12 +53,75 @@
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
+  function formatDateTime(isoStr) {
+    if (!isoStr) return "";
+    const d = new Date(isoStr);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
   function getMediaAsset(id) {
     return tiktokState.mediaAssets.find(a => a.id === id) || null;
   }
 
   function getAccount(id) {
     return tiktokState.accounts.find(a => a.id === id) || null;
+  }
+
+  function syncSettingsControls() {
+    const s = tiktokState.settings || {};
+    tiktokState.cartMode = s.accountMode || tiktokState.cartMode;
+    const autoPush = document.getElementById("chkAutoPushFromMuse");
+    const autoAI = document.getElementById("chkAutoWriteAI");
+    const tone = document.getElementById("selectAITone");
+    const tags = document.getElementById("inputDefaultHashtags");
+    const scheduleMode = document.getElementById("selectScheduleMode");
+    const interval = document.getElementById("inputIntervalMinutes");
+    const mute = document.getElementById("chkMuteOriginal");
+    const randomMusic = document.getElementById("chkRandomMusic");
+    const toggleSchedule = document.getElementById("btnToggleAutoSchedule");
+    if (autoPush) autoPush.checked = s.autoPushCompleted !== false;
+    if (autoAI) autoAI.checked = s.autoGenerateContent !== false;
+    if (tone && s.defaultTone) tone.value = s.defaultTone;
+    if (tags && Array.isArray(s.defaultHashtags)) tags.value = s.defaultHashtags.join(" ");
+    if (scheduleMode && s.scheduleMode) scheduleMode.value = s.scheduleMode;
+    if (interval) interval.value = s.intervalMinutes || 60;
+    if (mute) mute.checked = Number(s.defaultAudio?.originalVolume ?? 100) > 0;
+    if (randomMusic) randomMusic.checked = s.defaultAudio?.addRecommendedMusic !== false;
+    tiktokState.autoScheduleActive = Boolean(s.schedulerEnabled);
+    if (toggleSchedule) {
+      toggleSchedule.textContent = tiktokState.autoScheduleActive ? "▶ Lịch tự động: ĐANG CHẠY" : "⏸ Lịch tự động: ĐANG TẠM DỪNG";
+      toggleSchedule.classList.toggle("btn-success", tiktokState.autoScheduleActive);
+      toggleSchedule.classList.toggle("btn-warn", !tiktokState.autoScheduleActive);
+    }
+  }
+
+  async function refreshGeminiKeyStatus() {
+    if (!window.tiktokApp?.getApiKeyStatus) return;
+    const statusEl = document.getElementById("geminiKeyStatus");
+    const res = await window.tiktokApp.getApiKeyStatus();
+    if (!statusEl) return;
+    statusEl.textContent = res.configured ? `Đã lưu ${res.maskedKey || ""}` : "Chưa có key";
+    statusEl.className = `ai-key-status ${res.configured ? "ok" : "error"}`;
+  }
+
+  async function generateContentFor(ids) {
+    if (!window.tiktokApp?.generateContent) return { ok: false, error: "Chức năng AI chưa sẵn sàng" };
+    const tone = document.getElementById("selectAITone")?.value || "review";
+    const result = await window.tiktokApp.generateContent(ids, { tone });
+    if (!result?.ok) {
+      toast(`⚠ ${result?.error || "Không tạo được caption"}`);
+      return result;
+    }
+    const failed = result.failed || 0;
+    toast(failed ? `AI đã viết ${result.succeeded} caption, lỗi ${failed} dòng.` : `✓ AI đã viết xong ${result.succeeded} caption.`);
+    return result;
   }
 
   // --- RENDER COUNTERS & STATUSBAR ---
@@ -251,13 +314,23 @@
       const fileName = videoAsset ? videoAsset.path.split(/[/\\\\]/).pop() : job.id;
 
       // Caption text
-      const captionText = [job.content?.title || "", (job.content?.hashtags || []).join(" ")].filter(Boolean).join("\n") || "Chưa có nội dung. Bấm để nhập hoặc AI Viết...";
+      const captionText = [job.content?.title || "", job.content?.caption || "", (job.content?.hashtags || []).join(" ")].filter(Boolean).join("\n") || "Chưa có nội dung. Bấm để nhập hoặc AI Viết...";
+      const aiStatus = job.content?.generationStatus || "idle";
+      const aiStatusHtml = aiStatus === "generating"
+        ? `<div class="ai-row-status working">⏳ AI đang đọc ảnh và viết caption...</div>`
+        : aiStatus === "error"
+          ? `<div class="ai-row-status error" title="${esc(job.content?.generationError || "")}">⚠ ${esc(job.content?.generationError || "Không tạo được caption")}</div>`
+          : job.content?.generatedAt
+            ? `<div class="ai-row-status ok">✓ Caption AI đã tạo</div>`
+            : "";
 
       // Showcase fields
       const isCart = job.accountMode === "affiliate";
       const prodId = job.productMatch?.productId || "";
-      const prodName = job.productMatch?.title || "";
+      const prodName = job.productMatch?.productName || job.productMatch?.title || "";
       const prodConfirmed = job.productMatch?.confirmed;
+      const productCandidates = Array.isArray(job.productMatch?.candidates) ? job.productMatch.candidates : [];
+      const candidateOptions = productCandidates.map(p => `<option value="${esc(String(p.id || ""))}" ${String(p.id || "") === String(prodId) ? "selected" : ""}>${esc((p.title || p.name || "Sản phẩm") + " · ID " + (p.id || ""))}</option>`).join("");
 
       // Channel dropdown options
       const channelOptions = [
@@ -266,7 +339,10 @@
       ].join("");
 
       // Date time
-      const targetTimeVal = job.schedule?.targetTime ? job.schedule.targetTime.slice(0, 16) : "";
+      const scheduledIso = job.schedule?.effectiveTime || job.schedule?.targetTime || "";
+      const targetTimeVal = scheduledIso ? toDatetimeLocal(new Date(scheduledIso)) : "";
+      const isScheduledMode = job.schedule?.mode === "native_schedule";
+      const scheduledLabel = isScheduledMode && scheduledIso ? `📅 Sẽ đăng: ${formatDateTime(scheduledIso)}` : "⚡ Đăng ngay, không hẹn giờ";
 
       return `
         <tr data-job-id="${job.id}" class="${isSelected ? 'selected' : ''}">
@@ -286,6 +362,7 @@
           </td>
           <td>
             <textarea class="table-caption-edit" data-job-id="${job.id}" title="Bấm để sửa tiêu đề, hashtag trực tiếp">${esc(captionText)}</textarea>
+            ${aiStatusHtml}
           </td>
           <td>
             <div class="showcase-cell">
@@ -299,6 +376,9 @@
                 </div>
                 <input class="showcase-input input-row-pid" data-job-id="${job.id}" placeholder="ID SP Showcase" value="${esc(prodId)}">
                 <input class="showcase-input input-row-pname" data-job-id="${job.id}" placeholder="Tên SP Showcase" value="${esc(prodName)}">
+                ${candidateOptions ? `<select class="showcase-input select-product-candidate" data-job-id="${job.id}">${candidateOptions}</select>
+                <button class="btn-xs btn-confirm-product" data-id="${job.id}">🔒 Xác nhận & khóa ID</button>` : ''}
+                ${job.productMatch?.reason ? `<small title="${esc(job.productMatch.reason)}">AI: ${esc(job.productMatch.reason.slice(0, 90))}</small>` : ''}
               ` : '<span style="color:#8a7040;font-size:11px;">Chế độ không giỏ hàng</span>'}
             </div>
           </td>
@@ -308,10 +388,11 @@
                 <option value="native_schedule" ${job.schedule?.mode === 'native_schedule' ? 'selected' : ''}>📅 Lịch TikTok</option>
                 <option value="immediate" ${job.schedule?.mode === 'immediate' ? 'selected' : ''}>⚡ Đăng ngay</option>
               </select>
-              <input type="datetime-local" class="input-row-time" data-job-id="${job.id}" value="${targetTimeVal}" style="font-size:11px;padding:2px;">
+              <input type="datetime-local" class="input-row-time" data-job-id="${job.id}" value="${targetTimeVal}" ${isScheduledMode ? '' : 'disabled'} style="font-size:11px;padding:2px;${isScheduledMode ? '' : 'display:none;'}">
+              <div class="row-schedule-readable" style="font-size:10px;font-weight:700;color:${isScheduledMode ? '#9a6500' : '#7a6030'};margin-top:3px;">${esc(scheduledLabel)}</div>
               <div style="display:flex;gap:6px;font-size:10px;margin-top:2px;">
-                <label><input type="checkbox" checked disabled> Gốc</label>
-                <label><input type="checkbox" checked disabled> NhạcĐX</label>
+                <label title="Tích để giữ tiếng gốc; bỏ tích để tắt tiếng gốc"><input type="checkbox" class="chk-row-original" data-job-id="${job.id}" ${Number(job.audio?.originalVolume ?? tiktokState.settings?.defaultAudio?.originalVolume ?? 100) > 0 ? 'checked' : ''}> Gốc</label>
+                <label title="Tích để thêm nhạc TikTok đề xuất"><input type="checkbox" class="chk-row-recommended" data-job-id="${job.id}" ${job.audio?.addRecommendedMusic ?? tiktokState.settings?.defaultAudio?.addRecommendedMusic ?? true ? 'checked' : ''}> NhạcĐX</label>
               </div>
             </div>
           </td>
@@ -413,11 +494,19 @@
       if (!accId) return;
       toast("Đang kiểm tra đăng nhập TikTok...");
       if (window.tiktokApp && window.tiktokApp.checkAccount) {
-        const res = await window.tiktokApp.checkAccount(accId);
-        if (res.status === "live") {
-          toast("✓ Kênh đã đăng nhập sẵn sàng (LIVE)!");
-        } else {
-          toast("⚠ Kênh chưa đăng nhập TikTok. Cửa sổ Chrome đã được mở để bạn đăng nhập!");
+        try {
+          const res = await window.tiktokApp.checkAccount(accId);
+          if (res.status === "live") {
+            const selectedIds = Array.from(tiktokState.selectedJobIds);
+            const validAccountIds = new Set(tiktokState.accounts.map(a => a.id));
+            const unassigned = tiktokState.jobs.filter(j => selectedIds.includes(j.id) && (!j.accountId || !validAccountIds.has(j.accountId)));
+            for (const job of unassigned) await window.tiktokApp.updateJob(job.id, { accountId: accId });
+            toast(`✓ Kênh đã LIVE${unassigned.length ? ` · đã gán ${unassigned.length} video được chọn vào kênh này` : ""}`);
+          } else {
+            toast(`⚠ ${res.reason || "Kênh chưa đăng nhập TikTok. Hãy đăng nhập trong đúng cửa sổ Chrome của kênh này."}`);
+          }
+        } catch (error) {
+          toast(`⚠ Không kiểm tra được kênh: ${error.message}`);
         }
       }
     };
@@ -505,12 +594,145 @@
         btnModeCart.classList.add("active");
         btnModeNoCart.classList.remove("active");
         renderAccountsSidebar();
+        window.tiktokApp?.updateSettings?.({ accountMode: "affiliate" });
       });
       btnModeNoCart.addEventListener("click", () => {
         tiktokState.cartMode = "no_cart";
         btnModeNoCart.classList.add("active");
         btnModeCart.classList.remove("active");
         renderAccountsSidebar();
+        window.tiktokApp?.updateSettings?.({ accountMode: "no_cart" });
+      });
+    }
+
+    // Gemini key + AI settings
+    const btnSaveGeminiKey = document.getElementById("btnSaveGeminiKey");
+    if (btnSaveGeminiKey) {
+      btnSaveGeminiKey.addEventListener("click", async () => {
+        const input = document.getElementById("inputGeminiApiKey");
+        const statusEl = document.getElementById("geminiKeyStatus");
+        const apiKey = input?.value.trim() || "";
+        if (!apiKey) return toast("Hãy dán Gemini API key trước.");
+        btnSaveGeminiKey.disabled = true;
+        if (statusEl) { statusEl.textContent = "Đang kiểm tra..."; statusEl.className = "ai-key-status"; }
+        try {
+          const tested = await window.tiktokApp.testApiKey(apiKey);
+          if (!tested?.ok) {
+            if (statusEl) { statusEl.textContent = "Key lỗi"; statusEl.className = "ai-key-status error"; }
+            return toast(`Gemini không dùng được key này: ${tested?.error || "không rõ lỗi"}`);
+          }
+          const saved = await window.tiktokApp.saveApiKey(apiKey);
+          if (!saved?.ok) return toast(saved?.error || "Không lưu được API key");
+          input.value = "";
+          await refreshGeminiKeyStatus();
+          toast("✓ Gemini API key hợp lệ và đã được lưu mã hóa.");
+        } finally {
+          btnSaveGeminiKey.disabled = false;
+        }
+      });
+    }
+
+    const saveSettings = async () => {
+      if (!window.tiktokApp?.updateSettings) return;
+      const rawTags = document.getElementById("inputDefaultHashtags")?.value || "";
+      await window.tiktokApp.updateSettings({
+        autoPushCompleted: document.getElementById("chkAutoPushFromMuse")?.checked !== false,
+        autoGenerateContent: document.getElementById("chkAutoWriteAI")?.checked !== false,
+        defaultTone: document.getElementById("selectAITone")?.value || "review",
+        defaultHashtags: rawTags.match(/#[^\s#]+/g) || []
+      });
+    };
+    ["chkAutoPushFromMuse", "chkAutoWriteAI", "selectAITone", "inputDefaultHashtags"].forEach(id => {
+      document.getElementById(id)?.addEventListener("change", saveSettings);
+    });
+
+    const btnPickAudio = document.getElementById("btnPickAudioSource");
+    if (btnPickAudio) {
+      btnPickAudio.addEventListener("click", async () => {
+        const source = await window.tiktokApp?.chooseAudioSource?.();
+        if (!source?.path) return;
+        const ids = Array.from(tiktokState.selectedJobIds);
+        const targets = ids.length ? ids : tiktokState.jobs.map(j => j.id);
+        if (!targets.length) return toast("Hàng đợi chưa có video để ghép nhạc.");
+        btnPickAudio.disabled = true;
+        try {
+          const keepOriginal = document.getElementById("chkMuteOriginal")?.checked !== false;
+          for (const jobId of targets) {
+            await window.tiktokApp.updateJob(jobId, { audio: {
+              sourcePath: source.path,
+              enabled: true,
+              originalVolume: keepOriginal ? 100 : 0,
+              musicVolume: 85,
+              loop: true,
+              fadeOutSeconds: 0.5
+            }});
+          }
+          const mixed = await window.tiktokApp.processAudio(targets);
+          const ok = mixed?.results?.filter(item => item.ok).length || 0;
+          toast(`✓ Đã cắt/ghép nhạc theo đúng thời lượng cho ${ok} video.`);
+        } finally { btnPickAudio.disabled = false; }
+      });
+    }
+
+    const savePublishingSettings = async () => {
+      const mode = document.getElementById("selectScheduleMode")?.value || "immediate";
+      const startValue = document.getElementById("inputScheduleStart")?.value;
+      const firstDelayMinutes = startValue ? Math.max(0, Math.ceil((new Date(startValue).getTime() - Date.now()) / 60000)) : 0;
+      const intervalMinutes = Math.max(1, Number(document.getElementById("inputIntervalMinutes")?.value) || 60);
+      const keepOriginal = document.getElementById("chkMuteOriginal")?.checked !== false;
+      const addRecommendedMusic = document.getElementById("chkRandomMusic")?.checked !== false;
+      await window.tiktokApp?.updateSettings?.({
+        scheduleMode: mode,
+        firstDelayMinutes,
+        intervalMinutes,
+        defaultAudio: Object.assign({}, tiktokState.settings.defaultAudio || {}, {
+          originalVolume: keepOriginal ? 100 : 0,
+          addRecommendedMusic
+        })
+      });
+    };
+    ["selectScheduleMode", "inputScheduleStart", "inputIntervalMinutes", "chkMuteOriginal", "chkRandomMusic"].forEach(id => {
+      document.getElementById(id)?.addEventListener("change", savePublishingSettings);
+    });
+
+    const btnSelectPending = document.getElementById("btnSelectPending");
+    btnSelectPending?.addEventListener("click", () => {
+      tiktokState.selectedJobIds = new Set(tiktokState.jobs.filter(j => ["draft", "ready", "waiting_content", "waiting_product_confirmation", "failed"].includes(j.status)).map(j => j.id));
+      renderQueueTable();
+      toast(`Đã chọn ${tiktokState.selectedJobIds.size} bài đang chờ/lỗi.`);
+    });
+
+    const btnCleanCompleted = document.getElementById("btnCleanCompleted");
+    btnCleanCompleted?.addEventListener("click", async () => {
+      const ids = tiktokState.jobs.filter(j => ["posted", "failed", "needs_reconciliation"].includes(j.status)).map(j => j.id);
+      if (!ids.length) return toast("Không có bài đã đăng/lỗi cần dọn.");
+      if (!confirm(`Xóa ${ids.length} bài đã đăng/lỗi khỏi danh sách?`)) return;
+      await window.tiktokApp.removeJobs(ids, true);
+      toast(`Đã dọn ${ids.length} bài.`);
+    });
+
+    const btnToggleAutoSchedule = document.getElementById("btnToggleAutoSchedule");
+    btnToggleAutoSchedule?.addEventListener("click", async () => {
+      tiktokState.autoScheduleActive = !tiktokState.autoScheduleActive;
+      await window.tiktokApp?.updateSettings?.({ schedulerEnabled: tiktokState.autoScheduleActive });
+      if (tiktokState.autoScheduleActive) {
+        toast("Đã bật lịch tự động; bắt đầu xử lý các bài sẵn sàng.");
+        await window.tiktokApp?.runJobs?.(null);
+      } else {
+        await window.tiktokApp?.pauseJobs?.(null);
+        toast("Đã tạm dừng lịch tự động tại điểm an toàn.");
+      }
+    });
+
+    const btnAIPromptSample = document.getElementById("btnAIPromptSample");
+    if (btnAIPromptSample) {
+      btnAIPromptSample.addEventListener("click", async () => {
+        const ids = Array.from(tiktokState.selectedJobIds);
+        const targets = ids.length ? ids : tiktokState.jobs.map(j => j.id);
+        if (!targets.length) return toast("Hàng đợi chưa có video nào.");
+        btnAIPromptSample.disabled = true;
+        toast(`AI đang đọc ảnh và viết ${targets.length} caption...`);
+        try { await generateContentFor(targets); } finally { btnAIPromptSample.disabled = false; }
       });
     }
 
@@ -593,7 +815,8 @@
         toast(`Đang đưa ${selectedVids.length} video vào hàng đợi TikTok...`);
         if (window.tiktokApp && window.tiktokApp.addMuseResults) {
           const res = await window.tiktokApp.addMuseResults(selectedVids);
-          toast(`Đã thêm ${res.jobs ? res.jobs.length : selectedVids.length} video vào hàng đợi thành công!`);
+          if (res.content && !res.content.ok) toast(`Đã thêm video, nhưng AI chưa viết caption: ${res.content.error}`);
+          else toast(`Đã thêm ${res.added ? res.added.length : selectedVids.length} video vào hàng đợi thành công!`);
           tiktokState.selectedMuseVideoIds.clear();
           renderMuseVideoList();
         }
@@ -634,12 +857,61 @@
     }
 
     // Action Toolbar buttons
+    const runCheckedJobs = async (ids, actionLabel) => {
+      if (!ids.length) return toast("Hãy tick chọn video cần đăng trước.");
+      const activeAccount = tiktokState.accounts.find(a => a.id === tiktokState.activeAccountId);
+      if (!activeAccount || activeAccount.status !== "live") return toast("Kênh đang chọn chưa LIVE. Hãy bấm Check sau khi đăng nhập đúng cửa sổ Chrome của kênh.");
+      // The active channel is authoritative for the checked rows. This also
+      // repairs stale account IDs left behind after deleting/recreating a channel.
+      for (const job of tiktokState.jobs.filter(j => ids.includes(j.id) && j.accountId !== activeAccount.id)) {
+        await window.tiktokApp.updateJob(job.id, { accountId: activeAccount.id });
+      }
+      toast(`${actionLabel} ${ids.length} video trên ${activeAccount.label || "kênh đang chọn"}...`);
+      try {
+        const outcome = await window.tiktokApp.runJobs(ids);
+        if (!outcome?.ok) return toast(`⚠ ${outcome?.message || outcome?.error || "Không chạy được video"}`);
+        const failed = (outcome.results || []).filter(item => !item.ok);
+        if (failed.length) return toast(`⚠ ${failed.length}/${ids.length} video lỗi: ${failed[0].error || "Không rõ lỗi"}`);
+        toast(`✓ Đã xử lý ${ids.length} video thành công.`);
+      } catch (error) {
+        toast(`⚠ Không thể chạy: ${error.message}`);
+      }
+    };
+
     const btnSchedAll = document.getElementById("btnScheduleAll");
     if (btnSchedAll) {
       btnSchedAll.addEventListener("click", async () => {
         if (window.tiktokApp && window.tiktokApp.runJobs) {
-          toast("Đang bắt đầu lên lịch tất cả các bài...");
-          await window.tiktokApp.runJobs(null);
+          const ids = Array.from(tiktokState.selectedJobIds);
+          if (!ids.length) return toast("Hãy tick chọn video cần lên lịch trước.");
+          const startInput = document.getElementById("inputScheduleStart")?.value;
+          const start = startInput ? new Date(startInput) : new Date(Date.now() + 15 * 60 * 1000);
+          if (Number.isNaN(start.getTime())) return toast("Ngày giờ bắt đầu không hợp lệ.");
+          const minimum = new Date(Date.now() + 15 * 60 * 1000);
+          if (start < minimum) start.setTime(minimum.getTime());
+          const intervalMinutes = Math.max(1, Number(document.getElementById("inputIntervalMinutes")?.value) || 60);
+          const firstDelayMinutes = Math.max(15, Math.ceil((start.getTime() - Date.now()) / 60000));
+          await window.tiktokApp.updateSettings?.({
+            scheduleMode: "native_schedule",
+            firstDelayMinutes,
+            intervalMinutes
+          });
+          const globalMode = document.getElementById("selectScheduleMode");
+          if (globalMode) globalMode.value = "native_schedule";
+          const orderedJobs = tiktokState.jobs.filter(j => ids.includes(j.id));
+          for (let i = 0; i < orderedJobs.length; i++) {
+            const when = new Date(start.getTime() + i * intervalMinutes * 60 * 1000);
+            await window.tiktokApp.updateJob(orderedJobs[i].id, {
+              schedule: {
+                mode: "native_schedule",
+                targetTime: when.toISOString(),
+                effectiveTime: when.toISOString()
+              }
+            });
+          }
+          await window.tiktokApp.recalculateSchedule?.(ids);
+          toast(`Đã xếp ${ids.length} lịch từ ${formatDateTime(start.toISOString())}, cách nhau ${intervalMinutes} phút.`);
+          await runCheckedJobs(ids, "Đang bắt đầu lên lịch");
         }
       });
     }
@@ -648,10 +920,8 @@
     if (btnRunSel) {
       btnRunSel.addEventListener("click", async () => {
         const ids = Array.from(tiktokState.selectedJobIds);
-        if (ids.length === 0) return toast("Chưa chọn dòng nào để chạy");
-        toast(`Đang chạy ${ids.length} bài được chọn...`);
         if (window.tiktokApp && window.tiktokApp.runJobs) {
-          await window.tiktokApp.runJobs(ids);
+          await runCheckedJobs(ids, "Đang chạy");
         }
       });
     }
@@ -675,15 +945,40 @@
     if (btnVerifyAll) {
       btnVerifyAll.addEventListener("click", async () => {
         toast("Đang kiểm tra Showcase đối chiếu sản phẩm...");
-        const cartJobs = tiktokState.jobs.filter(j => j.accountMode === "affiliate");
-        for (const j of cartJobs) {
-          if (window.tiktokApp && window.tiktokApp.verifyProduct) {
-            await window.tiktokApp.verifyProduct(j.id);
-          }
-        }
-        toast("Hoàn tất kiểm tra sản phẩm Showcase!");
+        const selectedIds = Array.from(tiktokState.selectedJobIds);
+        const activeAccount = tiktokState.accounts.find(a => a.id === tiktokState.activeAccountId);
+        const targets = selectedIds.length ? tiktokState.jobs.filter(j => selectedIds.includes(j.id)) : tiktokState.jobs;
+        if (!activeAccount || activeAccount.status !== "live") return toast("Kênh đang chọn chưa LIVE. Hãy bấm Check trước.");
+        for (const job of targets.filter(j => j.accountId !== activeAccount.id)) await window.tiktokApp.updateJob(job.id, { accountId: activeAccount.id });
+        const cartJobs = targets.filter(j => j.accountMode === "affiliate");
+        const result = await window.tiktokApp?.verifyProduct?.(cartJobs.map(j => j.id));
+        const needsConfirm = result?.outcomes?.filter(o => !o.confirmed && o.candidates).length || 0;
+        toast(needsConfirm ? `Đã đối chiếu; ${needsConfirm} sản phẩm cần bấm Xác nhận & khóa ID.` : "Hoàn tất đối chiếu sản phẩm Showcase!");
       });
     }
+
+    const btnSyncShowcase = document.getElementById("btnSyncShowcase");
+    btnSyncShowcase?.addEventListener("click", async () => {
+      if (!tiktokState.activeAccountId) return toast("Hãy chọn kênh TikTok trước.");
+      const activeAccount = tiktokState.accounts.find(a => a.id === tiktokState.activeAccountId);
+      if (!activeAccount || activeAccount.status !== "live") return toast("Kênh đang chọn chưa LIVE. Hãy bấm Check trước.");
+      const selectedIds = Array.from(tiktokState.selectedJobIds);
+      const targets = selectedIds.length ? tiktokState.jobs.filter(j => selectedIds.includes(j.id)) : [];
+      for (const job of targets.filter(j => j.accountId !== activeAccount.id)) await window.tiktokApp.updateJob(job.id, { accountId: activeAccount.id });
+      btnSyncShowcase.disabled = true;
+      const oldText = btnSyncShowcase.textContent;
+      btnSyncShowcase.textContent = "⏳ Đang tải video kiểm tra & đọc Showcase...";
+      toast("Đang tải video kiểm tra 3 giây để TikTok mở danh sách Showcase; video này sẽ không được đăng.");
+      try {
+        const result = await window.tiktokApp?.syncShowcase?.(tiktokState.activeAccountId);
+        toast(result?.ok ? `✓ Đã đồng bộ ${result.count} sản phẩm Showcase.` : `⚠ ${result?.error || "Không đồng bộ được Showcase"}`);
+      } catch (error) {
+        toast(`⚠ Đồng bộ Showcase lỗi: ${error?.message || error}`);
+      } finally {
+        btnSyncShowcase.disabled = false;
+        btnSyncShowcase.textContent = oldText;
+      }
+    });
 
     const btnAIGen = document.getElementById("btnAIGenerateSelected");
     if (btnAIGen) {
@@ -691,17 +986,9 @@
         const ids = Array.from(tiktokState.selectedJobIds);
         const targetIds = ids.length > 0 ? ids : tiktokState.jobs.map(j => j.id);
         if (targetIds.length === 0) return toast("Hàng đợi chưa có video nào");
-        toast(`AI đang viết tiêu đề và hashtag cho ${targetIds.length} video...`);
-        for (const jId of targetIds) {
-          if (window.tiktokApp && window.tiktokApp.generateContent) {
-            try {
-              await window.tiktokApp.generateContent(jId, { tone: "review" });
-            } catch (err) {
-              console.warn("Lỗi sinh AI cho job:", jId, err);
-            }
-          }
-        }
-        toast("Đã tạo nội dung AI xong!");
+        toast(`AI đang đọc ảnh và viết caption cho ${targetIds.length} video...`);
+        btnAIGen.disabled = true;
+        try { await generateContentFor(targetIds); } finally { btnAIGen.disabled = false; }
       });
     }
 
@@ -731,6 +1018,17 @@
           return;
         }
 
+        const confirmProductBtn = e.target.closest(".btn-confirm-product");
+        if (confirmProductBtn) {
+          const jId = confirmProductBtn.getAttribute("data-id");
+          const row = confirmProductBtn.closest("tr");
+          const productId = row?.querySelector(".select-product-candidate")?.value || row?.querySelector(".input-row-pid")?.value.trim();
+          if (!productId) return toast("Chưa có Product ID để khóa.");
+          const result = await window.tiktokApp?.confirmProduct?.(jId, productId);
+          toast(result?.ok ? `✓ Đã khóa Product ID ${productId}. Lần sau ảnh này sẽ tự khớp.` : `⚠ ${result?.error || "Không khóa được sản phẩm"}`);
+          return;
+        }
+
         const chk = e.target.closest(".job-check");
         if (chk) {
           const jId = chk.getAttribute("data-id");
@@ -750,9 +1048,13 @@
           const lines = text.split("\n");
           const title = lines[0] || "";
           const hashtags = text.match(/#[^\s#]+/g) || [];
+          const caption = lines.slice(1).filter(line => {
+            const words = line.trim().split(/\s+/).filter(Boolean);
+            return !(words.length && words.every(word => word.startsWith("#")));
+          }).join("\n").trim();
           if (window.tiktokApp && window.tiktokApp.updateJob) {
             await window.tiktokApp.updateJob(jId, {
-              content: { title, caption: text, hashtags }
+              content: { title, caption, hashtags }
             });
             toast("Đã cập nhật tiêu đề/mô tả.");
           }
@@ -764,6 +1066,24 @@
           if (window.tiktokApp && window.tiktokApp.updateJob) {
             await window.tiktokApp.updateJob(jId, { accountId: accId });
             toast("Đã gán kênh cho video.");
+          }
+        }
+
+        // Audio toggles per row: checked Gốc = keep original sound;
+        // unchecked Gốc = mute it. NhạcĐX independently enables TikTok's
+        // recommended music picker.
+        if (e.target.classList.contains("chk-row-original") || e.target.classList.contains("chk-row-recommended")) {
+          const row = e.target.closest("tr");
+          const keepOriginal = row?.querySelector(".chk-row-original")?.checked !== false;
+          const addRecommendedMusic = row?.querySelector(".chk-row-recommended")?.checked === true;
+          if (window.tiktokApp && window.tiktokApp.updateJob) {
+            await window.tiktokApp.updateJob(jId, {
+              audio: {
+                originalVolume: keepOriginal ? 100 : 0,
+                addRecommendedMusic
+              }
+            });
+            toast(`${keepOriginal ? "Giữ" : "Tắt"} tiếng gốc · ${addRecommendedMusic ? "Có" : "Không"} nhạc đề xuất`);
           }
         }
 
@@ -784,7 +1104,7 @@
           const pname = row.querySelector(".input-row-pname")?.value.trim() || "";
           if (window.tiktokApp && window.tiktokApp.updateJob) {
             await window.tiktokApp.updateJob(jId, {
-              productMatch: { productId: pid, title: pname, confirmed: Boolean(pid) }
+              productMatch: { productId: pid, productName: pname, title: pname, confirmed: false, candidates: [] }
             });
           }
         }
@@ -793,12 +1113,17 @@
         if (e.target.classList.contains("select-row-mode") || e.target.classList.contains("input-row-time")) {
           const row = e.target.closest("tr");
           const mode = row.querySelector(".select-row-mode")?.value || "native_schedule";
-          const timeVal = row.querySelector(".input-row-time")?.value || "";
+          const timeInput = row.querySelector(".input-row-time");
+          if (mode === "native_schedule" && !timeInput.value) {
+            timeInput.value = toDatetimeLocal(new Date(Date.now() + 15 * 60 * 1000));
+          }
+          const timeVal = timeInput?.value || "";
           if (window.tiktokApp && window.tiktokApp.updateJob) {
             await window.tiktokApp.updateJob(jId, {
               schedule: {
                 mode,
-                targetTime: timeVal ? new Date(timeVal).toISOString() : new Date().toISOString()
+                targetTime: mode === "native_schedule" && timeVal ? new Date(timeVal).toISOString() : null,
+                effectiveTime: mode === "native_schedule" && timeVal ? new Date(timeVal).toISOString() : null
               }
             });
           }
@@ -824,6 +1149,8 @@
               tiktokState.activeAccountId = tiktokState.accounts[0].id;
             }
             renderQueueTable();
+            syncSettingsControls();
+            refreshGeminiKeyStatus();
           }
         });
       }
@@ -841,6 +1168,7 @@
               tiktokState.activeAccountId = tiktokState.accounts[0].id;
             }
             renderQueueTable();
+            syncSettingsControls();
           }
         });
       }
